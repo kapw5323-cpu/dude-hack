@@ -46,7 +46,7 @@ __unused static bool safe_write_float(void *address, float value) {
 }
 
 // ==========================================
-// GIAO DIỆN MOD MENU NỔI (KÉO THẢ & THU GÓN THÔNG MINH)
+// GIAO DIỆN MOD MENU NỔI (KÉO THẢ & THU GỌN THÔNG MINH)
 // ==========================================
 @interface ModMenuViewController : UIViewController
 @property (nonatomic, strong) UIView *menuContainer;
@@ -71,21 +71,21 @@ __unused static bool safe_write_float(void *address, float value) {
     self.menuContainer.layer.borderWidth = 1.5f;
     self.menuContainer.layer.borderColor = [UIColor redColor].CGColor;
     self.menuContainer.userInteractionEnabled = YES;
-    self.menuContainer.hidden = NO; // Mặc định mở menu to khi khởi động
+    self.menuContainer.hidden = NO;
     [self.view addSubview:self.menuContainer];
     
-    // Thêm cử chỉ kéo thả (Pan Gesture) cho Menu To để bro kéo đi đâu cũng được
+    // Thêm cử chỉ kéo thả (Pan Gesture) cho Menu To
     UIPanGestureRecognizer *panGesture = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handleMenuPan:)];
     [self.menuContainer addGestureRecognizer:panGesture];
     
-    // Tiêu đề Menu To (Bấm vào tiêu đề hoặc thanh ngang để kéo)
+    // Tiêu đề Menu To
     UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 10, 160, 30)];
     titleLabel.text = @"🔥 DudeHack Pro 🔥";
     titleLabel.textColor = [UIColor whiteColor];
     titleLabel.font = [UIFont boldSystemFontOfSize:14];
     [self.menuContainer addSubview:titleLabel];
     
-    // Nút thu nhỏ (Thu về Menu bé) nằm góc phải tiêu đề
+    // Nút thu nhỏ (Thu về Menu bé)
     UIButton *minimizeBtn = [UIButton buttonWithType:UIButtonTypeCustom];
     minimizeBtn.frame = CGRectMake(180, 10, 50, 30);
     [minimizeBtn setTitle:@"[ - ]" forState:UIControlStateNormal];
@@ -121,7 +121,7 @@ __unused static bool safe_write_float(void *address, float value) {
     [fovSlider addTarget:self action:@selector(sliderChanged:) forControlEvents:UIControlEventValueChanged];
     [self.menuContainer addSubview:fovSlider];
     
-    // 2. Menu Bé (Nút HACK nổi tròn, có thể kéo đi mọi nơi và bấm mở lại Menu To)
+    // 2. Menu Bé (Nút HACK nổi tròn, kéo thả được và bấm để mở lại Menu To)
     self.collapseBtn = [UIButton buttonWithType:UIButtonTypeCustom];
     self.collapseBtn.frame = CGRectMake(40, 40, 45, 45);
     self.collapseBtn.backgroundColor = [UIColor redColor];
@@ -130,16 +130,15 @@ __unused static bool safe_write_float(void *address, float value) {
     self.collapseBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
     self.collapseBtn.layer.cornerRadius = 22.5f;
     self.collapseBtn.userInteractionEnabled = YES;
-    self.collapseBtn.hidden = YES; // Mặc định ẩn nút bé khi mới vào vì đang mở Menu to
+    self.collapseBtn.hidden = YES;
     [self.collapseBtn addTarget:self action:@selector(restoreMenu:) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:self.collapseBtn];
     
-    // Thêm cử chỉ kéo thả cho Menu Bé (Nút HACK)
+    // Thêm cử chỉ kéo thả cho Menu Bé
     UIPanGestureRecognizer *panCollapse = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handleCollapsePan:)];
     [self.collapseBtn addGestureRecognizer:panCollapse];
 }
 
-// Hàm hỗ trợ kéo thả Menu To trên màn hình
 - (void)handleMenuPan:(UIPanGestureRecognizer *)gesture {
     CGPoint translation = [gesture translationInView:self.view];
     UIView *menu = self.menuContainer;
@@ -147,7 +146,6 @@ __unused static bool safe_write_float(void *address, float value) {
     [gesture setTranslation:CGPointZero inView:self.view];
 }
 
-// Hàm hỗ trợ kéo thả Menu Bé (Nút HACK) trên màn hình
 - (void)handleCollapsePan:(UIPanGestureRecognizer *)gesture {
     CGPoint translation = [gesture translationInView:self.view];
     UIButton *btn = self.collapseBtn;
@@ -155,13 +153,11 @@ __unused static bool safe_write_float(void *address, float value) {
     [gesture setTranslation:CGPointZero inView:self.view];
 }
 
-// Thu nhỏ Menu To thành Menu Bé (Nút HACK)
 - (void)minimizeMenu:(UIButton *)sender {
     self.menuContainer.hidden = YES;
     self.collapseBtn.hidden = NO;
 }
 
-// Mở lại Menu To từ Menu Bé
 - (void)restoreMenu:(UIButton *)sender {
     self.collapseBtn.hidden = YES;
     self.menuContainer.hidden = NO;
@@ -283,7 +279,7 @@ void *hook_PlayerCamera_LateUpdate(void *self) {
         return result;
     }
     
-    dispatch_async(dispatch_get_main_queue(), ?, ^{
+    dispatch_async(dispatch_get_main_queue(), ^{
         // 1. PhotonNetwork::get_PlayerListOthers()
         void *(*get_PlayerListOthers)(void) = (void *(*)(void))0x0; 
         if (!get_PlayerListOthers) return;
