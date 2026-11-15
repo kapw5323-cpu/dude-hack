@@ -153,7 +153,7 @@ static bool safe_write_float(void *address, float value) {
     self.menuContainer.hidden = !self.menuContainer.hidden;
 }
 
-@end // Kết thúc @implementation ModMenuViewController chính xác
+@end
 
 // ==========================================
 // KHỞI TẠO CỬA SỔ NỔI BẤT TỬ
@@ -195,18 +195,18 @@ static void setupOverlayWindow(void) {
 }
 
 // ==========================================
-// HOOK CAMERA
+-- HOOK CAMERA
 // ==========================================
 void *(*old_PlayerCamera_LateUpdate)(void *self);
 void *hook_PlayerCamera_LateUpdate(void *self) {
-    void *result = old_PlayerCamera_LateUpdate(self);
+    void *result = old_PlayerCodeCamera_LateUpdate ? old_PlayerCamera_LateUpdate(self) : NULL;
     if (!g_aimHeadEnabled && !g_aimBodyEnabled) {
         return result;
     }
     return result;
 }
 
-// Constructor tiêm code chuẩn Logos
+// Constructor tiêm code chuẩn Logos (Yêu cầu file code phải có đuôi .xm và Makefile khai báo Tweak_FILES = Tweak.xm)
 %ctor {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         setupOverlayWindow();
