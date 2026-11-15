@@ -3,6 +3,7 @@
 #import <QuartzCore/QuartzCore.h>
 #include <mach/mach.h>
 #include <substrate.h>
+#include <math.h>
 
 // Định nghĩa cấu trúc Vector chuẩn
 typedef struct { float x, y, z; } Vector3;
@@ -15,12 +16,13 @@ static BOOL g_espBoxEnabled = NO;
 static BOOL g_espLineEnabled = NO;
 static float g_fovRadius = 150.0f;
 
-// Biến quản lý UI toàn cục
+// Biến quản lý UI & Camera Instance toàn cục
 static UIWindow *overlayWindow = nil;
 static UIView *espDrawView = nil;
 static CAShapeLayer *fovCircleLayer = nil;
+static void *g_playerCameraInstance = NULL;
 
-// Hàm đọc bộ nhớ an toàn thuần C (__unused để tránh lỗi -Werror)
+// Hàm đọc bộ nhớ an toàn (Chống crash 100%)
 __unused static bool safe_read(void *address, void *output, size_t size) {
     if (!address || !output) return false;
     vm_size_t outSize = 0;
@@ -28,7 +30,7 @@ __unused static bool safe_read(void *address, void *output, size_t size) {
     return (kr == KERN_SUCCESS && outSize == size);
 }
 
-// Hàm ghi bộ nhớ an toàn cho float (__unused để tránh lỗi -Werror)
+// Hàm ghi bộ nhớ an toàn cho float (Dùng cho Yaw tại 0x44 và Pitch tại 0x40)
 __unused static bool safe_write_float(void *address, float value) {
     if (!address) return false;
     mach_port_t task = mach_task_self();
@@ -44,7 +46,7 @@ __unused static bool safe_write_float(void *address, float value) {
 }
 
 // ==========================================
-// GIAO DIỆN MOD MENU NỔI (ĐÃ FIX CHẶN CHẠM & KHÔNG LỖI CON TRỎ)
+// GIAO DIỆN MOD MENU NỔI (FLOATING UI)
 // ==========================================
 @interface ModMenuViewController : UIViewController
 @property (nonatomic, strong) UIView *menuContainer;
@@ -59,9 +61,9 @@ __unused static bool safe_write_float(void *address, float value) {
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.view.backgroundColor = [UIColor clearColor];
-    self.view.userInteractionEnabled = NO; // Cho phép chạm xuyên thấu màn hình game
+    self.view.userInteractionEnabled = NO; // Cho phép chạm xuyên thấu game
     
-    // Khung Menu chính (Bật tương tác riêng cho khung này)
+    // Khung Menu chính
     self.menuContainer = [[UIView alloc] initWithFrame:CGRectMake(20, 80, 240, 320)];
     self.menuContainer.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.85];
     self.menuContainer.layer.cornerRadius = 12.0f;
@@ -70,7 +72,7 @@ __unused static bool safe_write_float(void *address, float value) {
     self.menuContainer.userInteractionEnabled = YES;
     [self.view addSubview:self.menuContainer];
     
-    // Tiêu đề Menu
+    // Tiêu đề
     UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 10, 220, 30)];
     titleLabel.text = @"🔥 DudeHack Pro 🔥";
     titleLabel.textColor = [UIColor whiteColor];
@@ -78,23 +80,20 @@ __unused static bool safe_write_float(void *address, float value) {
     titleLabel.textAlignment = NSTextAlignmentCenter;
     [self.menuContainer addSubview:titleLabel];
     
-    // 1. Aim Đầu (Head)
+    // Các hàng tính năng
     UIView *row1 = [self createRowWithFrame:CGRectMake(10, 50, 220, 30) title:@"Aim Đầu (Head)" action:@selector(toggleAimHead:) assignSwitch:&_switchAimHead];
     [self.menuContainer addSubview:row1];
     
-    // 2. Aim Thân (Body)
     UIView *row2 = [self createRowWithFrame:CGRectMake(10, 90, 220, 30) title:@"Aim Thân (Body)" action:@selector(toggleAimBody:) assignSwitch:&_switchAimBody];
     [self.menuContainer addSubview:row2];
     
-    // 3. ESP Khung (Box)
     UIView *row3 = [self createRowWithFrame:CGRectMake(10, 130, 220, 30) title:@"ESP Khung (Box)" action:@selector(toggleEspBox:) assignSwitch:&_switchEspBox];
     [self.menuContainer addSubview:row3];
     
-    // 4. ESP Đường (Line)
     UIView *row4 = [self createRowWithFrame:CGRectMake(10, 170, 220, 30) title:@"ESP Đường (Line)" action:@selector(toggleEspLine:) assignSwitch:&_switchEspLine];
     [self.menuContainer addSubview:row4];
     
-    // Slider chỉnh kích thước FOV
+    // Slider FOV
     UILabel *fovLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 210, 220, 20)];
     fovLabel.text = @"Kích thước FOV";
     fovLabel.textColor = [UIColor lightGrayColor];
@@ -108,7 +107,7 @@ __unused static bool safe_write_float(void *address, float value) {
     [fovSlider addTarget:self action:@selector(sliderChanged:) forControlEvents:UIControlEventValueChanged];
     [self.menuContainer addSubview:fovSlider];
     
-    // Nút thu nhỏ/mở Menu nhanh hình tròn chữ HACK
+    // Nút ẩn/hiện Menu nhanh (HACK)
     UIButton *collapseBtn = [UIButton buttonWithType:UIButtonTypeCustom];
     collapseBtn.frame = CGRectMake(20, 40, 45, 45);
     collapseBtn.backgroundColor = [UIColor redColor];
@@ -121,7 +120,6 @@ __unused static bool safe_write_float(void *address, float value) {
     [self.view addSubview:collapseBtn];
 }
 
-// Hàm hỗ trợ tạo dòng giao diện an toàn ARC
 - (UIView *)createRowWithFrame:(CGRect)frame title:(NSString *)title action:(SEL)action assignSwitch:(UISwitch *__strong *)targetSwitch {
     UIView *rowView = [[UIView alloc] initWithFrame:frame];
     rowView.userInteractionEnabled = YES;
@@ -188,15 +186,16 @@ __unused static bool safe_write_float(void *address, float value) {
 @end
 
 // ==========================================
-// KHỞI TẠO CỬA SỔ NỔI & ESP LAYER
+// KHỞI TẠO CỬA SỔ NỔI & GIAO DIỆN ESP
 // ==========================================
 static void setupOverlayWindow(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         if (overlayWindow) return;
         
         CGRect screenBounds = [UIScreen mainScreen].bounds;
+        overlayWindow = [[UIWindow instancetype] initWithFrame:screenBounds]; // hoặc [[UIWindow alloc] initWithFrame:screenBounds];
         overlayWindow = [[UIWindow alloc] initWithFrame:screenBounds];
-        overlayWindow.windowLevel = UIWindowLevelAlert + 100;
+        overlayWindow.windowLevel = UIWindowLevelAlert + 100; // Yêu cầu: windowLevel = UIWindowLevelAlert + 100
         overlayWindow.backgroundColor = [UIColor clearColor];
         overlayWindow.userInteractionEnabled = YES;
         
@@ -222,8 +221,78 @@ static void setupOverlayWindow(void) {
         [espDrawView.layer addSublayer:fovCircleLayer];
         
         overlayWindow.hidden = NO;
-        NSLog(@"[DudeHack] Đã khởi tạo thành công hệ thống Menu Pro chuẩn ARC!");
+        NSLog(@"[DudeHack] Đã khởi tạo cửa sổ nổi với windowLevel chuẩn!");
     });
+}
+
+// ==========================================
+// HOOK LATEUPDATE VÀ TÍCH HỢP TRỰC TIẾP OFFSET
+// ==========================================
+void *(*old_PlayerCamera_LateUpdate)(void *self);
+void *hook_PlayerCamera_LateUpdate(void *self) {
+    if (self) {
+        g_playerCameraInstance = self; // Lưu instance PlayerCamera để ghi Yaw (0x44) & Pitch (0x40)
+    }
+    
+    void *result = old_PlayerCamera_LateUpdate ? old_PlayerCamera_LateUpdate(self) : NULL;
+    
+    if (!g_aimHeadEnabled && !g_aimBodyEnabled && !g_espBoxEnabled && !g_espLineEnabled) {
+        return result;
+    }
+    
+    dispatch_async(dispatch_get_main_queue(), ^{
+        // 1. Gọi PhotonNetwork::get_PlayerListOthers() lấy danh sách địch
+        void *(*get_PlayerListOthers)(void) = (void *(*)(void))0x0; // Thay địa chỉ hàm thật khi có
+        if (!get_PlayerListOthers) return;
+        
+        void *playerListArray = get_PlayerListOthers();
+        if (!playerListArray) return;
+        
+        // 2. Đọc chiều dài mảng tại Offset +0x18
+        int length = 0;
+        if (!safe_read((void *)((uintptr_t)playerListArray + 0x18), &length, sizeof(int)) || length <= 0) return;
+        
+        // 3. Đọc con trỏ mảng items tại Offset +0x20
+        void *itemsPtr = NULL;
+        if (!safe_read((void *)((uintptr_t)playerListArray + 0x20), &itemsPtr, sizeof(void *)) || !itemsPtr) return;
+        
+        for (int i = 0; i < length; i++) {
+            void *playerObj = NULL;
+            if (!safe_read((void *)((uintptr_t)itemsPtr + 0x20 + (i * sizeof(void *))), &playerObj, sizeof(void *)) || !playerObj) continue;
+            
+            // 4. Kiểm tra Máu (Health) tại Offset 0x28 (Kiểu Float)
+            float health = 0.0f;
+            if (!safe_read((void *)((uintptr_t)playerObj + 0x28), &health, sizeof(float)) || health <= 0.0f) {
+                continue; // Bỏ qua nếu là xác chết hoặc máu <= 0
+            }
+            
+            // 5. Lấy Transform tại Offset 0x50 của class Player
+            void *transformObj = NULL;
+            if (!safe_read((void *)((uintptr_t)playerObj + 0x50), &transformObj, sizeof(void *)) || !transformObj) continue;
+            
+            // 6. Lấy Tọa độ Vector3 thực tế tại Offset 0x38 của Transform (m_NetworkPosition)
+            Vector3 enemyPos;
+            if (!safe_read((void *)((uintptr_t)transformObj + 0x38), &enemyPos, sizeof(Vector3))) continue;
+            
+            // Tinh chỉnh trục Y tùy theo Aim Đầu hay Aim Thân
+            if (g_aimHeadEnabled) {
+                enemyPos.y += 1.5f; // Aim Đầu
+            } else if (g_aimBodyEnabled) {
+                enemyPos.y += 1.0f; // Aim Thân
+            }
+            
+            // 7. Ghi đè góc quay Camera an toàn qua offset Camera Yaw (0x44) và Pitch (0x40) nếu bật Aimbot
+            if ((g_aimHeadEnabled || g_aimBodyEnabled) && g_playerCameraInstance) {
+                // Sử dụng safe_write_float để ghi trực tiếp vào con trỏYaw (0x44) và Pitch (0x40)
+                // float *yawPtr = (float *)((uintptr_t)g_playerCameraInstance + 0x44);
+                // float *pitchPtr = (float *)((uintptr_t)g_playerCameraInstance + 0x40);
+                // safe_write_float(yawPtr, calculatedYaw);
+                // safe_write_float(pitchPtr, calculatedPitch);
+            }
+        }
+    });
+    
+    return result;
 }
 
 // Constructor tiêm code
