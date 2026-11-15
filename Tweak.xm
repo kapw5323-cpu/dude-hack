@@ -14,16 +14,16 @@ static UIWindow *overlayWindow = nil;
 static UIView *espDrawView = nil;
 static CAShapeLayer *fovCircleLayer = nil;
 
-// Hàm đọc bộ nhớ an toàn thuần C
-static bool safe_read(void *address, void *output, size_t size) {
+// Hàm đọc bộ nhớ an toàn thuần C (Thêm __unused để tránh lỗi Theos -Werror)
+__unused static bool safe_read(void *address, void *output, size_t size) {
     if (!address || !output) return false;
     vm_size_t outSize = 0;
     kern_return_t kr = vm_read_overwrite(mach_task_self(), (vm_address_t)address, size, (vm_address_t)output, &outSize);
     return (kr == KERN_SUCCESS && outSize == size);
 }
 
-// Hàm ghi bộ nhớ an toàn cho float (Yaw / Pitch)
-static bool safe_write_float(void *address, float value) {
+// Hàm ghi bộ nhớ an toàn cho float (Thêm __unused để tránh lỗi Theos -Werror)
+__unused static bool safe_write_float(void *address, float value) {
     if (!address) return false;
     mach_port_t task = mach_task_self();
     vm_size_t size = sizeof(float);
