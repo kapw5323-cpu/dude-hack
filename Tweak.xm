@@ -14,7 +14,7 @@ static BOOL g_aimHeadEnabled = NO;
 static BOOL g_aimBodyEnabled = NO;
 static BOOL g_espBoxEnabled = NO;
 static BOOL g_espLineEnabled = NO;
-static float g_fovRadius = 150.0f;
+__unused static float g_fovRadius = 150.0f;
 
 // Biến quản lý UI toàn cục
 static UIView *menuView = nil;
@@ -44,7 +44,7 @@ __unused static bool safe_write_float(void *address, float value) {
     return true;
 }
 
-// Hàm lấy Window an toàn chuẩn iOS hiện đại (Tránh lỗi deprecated keyWindow)
+// Hàm lấy Window an toàn chuẩn iOS hiện đại
 static UIWindow *getGameWindow(void) {
     for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
         if ([scene isKindOfClass:[UIWindowScene class]]) {
@@ -56,6 +56,22 @@ static UIWindow *getGameWindow(void) {
         }
     }
     return [UIApplication sharedApplication].windows.firstObject;
+}
+
+// Xử lý ẩn/hiện Menu
+void toggleMenuVisibility(void) {
+    if (menuView) {
+        menuView.hidden = !menuView.hidden;
+    }
+}
+
+// Xử lý kéo thả nút HACK
+void handleButtonPan(UIPanGestureRecognizer *gesture) {
+    if (floatingHackBtn) {
+        CGPoint translation = [gesture translationInView:floatingHackBtn.superview];
+        floatingHackBtn.center = CGPointMake(floatingHackBtn.center.x + translation.x, floatingHackBtn.center.y + translation.y);
+        [gesture setTranslation:CGPointZero inView:floatingHackBtn.superview];
+    }
 }
 
 // ==========================================
@@ -78,7 +94,6 @@ static void setupHackUI(void) {
         floatingHackBtn.layer.cornerRadius = 22.5f;
         floatingHackBtn.userInteractionEnabled = YES;
         
-        // Dùng UIControlEventTouchUpInside kết hợp Action block chuẩn
         [floatingHackBtn addTarget:nil action:@selector(toggleMenuVisibility) forControlEvents:UIControlEventTouchUpInside];
         
         UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:nil action:@selector(handleButtonPan:)];
@@ -109,25 +124,7 @@ static void setupHackUI(void) {
         closeBtn.titleLabel.font = [UIFont boldSystemFontOfSize:13];
         [closeBtn addTarget:nil action:@selector(toggleMenuVisibility) forControlEvents:UIControlEventTouchUpInside];
         [menuView addSubview:closeBtn];
-        
-        NSLog(@"[DudeHack] Da nhung UI thanh cong!");
     });
-}
-
-// Xử lý ẩn/hiện Menu
-void toggleMenuVisibility(void) {
-    if (menuView) {
-        menuView.hidden = !menuView.hidden;
-    }
-}
-
-// Xử lý kéo thả nút HACK
-void handleButtonPan(UIPanGestureRecognizer *gesture) {
-    if (floatingHackBtn) {
-        CGPoint translation = [gesture translationInView:floatingHackBtn.superview];
-        floatingHackBtn.center = CGPointMake(floatingHackBtn.center.x + translation.x, floatingHackBtn.center.y + translation.y);
-        [gesture setTranslation:CGPointZero inView:floatingHackBtn.superview];
-    }
 }
 
 // ==========================================
