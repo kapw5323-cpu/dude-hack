@@ -1,6 +1,5 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
-#import <QuartzCore/QuartzCore.h>
 
 __attribute__((constructor))
 static void init() {
@@ -11,9 +10,15 @@ static void init() {
         UIView *circleView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 300, 300)];
         circleView.center = CGPointMake(window.bounds.size.width / 2, window.bounds.size.height / 2);
         circleView.backgroundColor = [UIColor clearColor];
-        circleView.layer.cornerRadius = 150;
-        circleView.layer.borderWidth = 1.0;
-        circleView.layer.borderColor = [UIColor redColor].CGColor;
+        
+        CAShapeLayer *circleLayer = [CAShapeLayer layer];
+        UIBezierPath *path = [UIBezierPath bezierPathWithOvalInRect:CGRectMake(0, 0, 300, 300)];
+        circleLayer.path = path.CGPath;
+        circleLayer.fillColor = [UIColor clearColor].CGColor;
+        circleLayer.strokeColor = [UIColor redColor].CGColor;
+        circleLayer.lineWidth = 1.0;
+        
+        [circleView.layer addSublayer:circleLayer];
         circleView.userInteractionEnabled = NO;
         
         [window addSubview:circleView];
