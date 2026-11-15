@@ -44,7 +44,7 @@ __unused static bool safe_write_float(void *address, float value) {
 }
 
 // ==========================================
-// GIAO DIỆN MOD MENU NỔI (ĐÃ FIX CHẶN CHẠM GAME)
+// GIAO DIỆN MOD MENU NỔI (ĐÃ FIX CHẶN CHẠM & KHÔNG LỖI CON TRỎ)
 // ==========================================
 @interface ModMenuViewController : UIViewController
 @property (nonatomic, strong) UIView *menuContainer;
@@ -78,19 +78,23 @@ __unused static bool safe_write_float(void *address, float value) {
     titleLabel.textAlignment = NSTextAlignmentCenter;
     [self.menuContainer addSubview:titleLabel];
     
-    // Hàng Aim Đầu
-    [self addRowWithFrame:CGRectMake(10, 50, 220, 30) title:@"Aim Đầu (Head)" action:@selector(toggleAimHead:) assignSwitch:&_switchAimHead];
+    // 1. Aim Đầu (Head)
+    UIView *row1 = [self createRowWithFrame:CGRectMake(10, 50, 220, 30) title:@"Aim Đầu (Head)" action:@selector(toggleAimHead:) assignSwitch:&_switchAimHead];
+    [self.menuContainer addSubview:row1];
     
-    // Hàng Aim Thân
-    [self addRowWithFrame:CGRectMake(10, 90, 220, 30) title:@"Aim Thân (Body)" action:@selector(toggleAimBody:) assignSwitch:&_switchAimBody];
+    // 2. Aim Thân (Body)
+    UIView *row2 = [self createRowWithFrame:CGRectMake(10, 90, 220, 30) title:@"Aim Thân (Body)" action:@selector(toggleAimBody:) assignSwitch:&_switchAimBody];
+    [self.menuContainer addSubview:row2];
     
-    // Hàng ESP Box
-    [self addRowWithFrame:CGRectMake(10, 130, 220, 30) title:@"ESP Khung (Box)" action:@selector(toggleEspBox:) assignSwitch:&_switchEspBox];
+    // 3. ESP Khung (Box)
+    UIView *row3 = [self createRowWithFrame:CGRectMake(10, 130, 220, 30) title:@"ESP Khung (Box)" action:@selector(toggleEspBox:) assignSwitch:&_switchEspBox];
+    [self.menuContainer addSubview:row3];
     
-    // Hàng ESP Line
-    [self addRowWithFrame:CGRectMake(10, 170, 220, 30) title:@"ESP Đường (Line)" action:@selector(toggleEspLine:) assignSwitch:&_switchEspLine];
+    // 4. ESP Đường (Line)
+    UIView *row4 = [self createRowWithFrame:CGRectMake(10, 170, 220, 30) title:@"ESP Đường (Line)" action:@selector(toggleEspLine:) assignSwitch:&_switchEspLine];
+    [self.menuContainer addSubview:row4];
     
-    // Slider chỉnh FOV
+    // Slider chỉnh kích thước FOV
     UILabel *fovLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 210, 220, 20)];
     fovLabel.text = @"Kích thước FOV";
     fovLabel.textColor = [UIColor lightGrayColor];
@@ -117,22 +121,25 @@ __unused static bool safe_write_float(void *address, float value) {
     [self.view addSubview:collapseBtn];
 }
 
-- (void)addRowWithFrame:(CGRect)frame title:(NSString *)title action:(SEL)action assignSwitch:(UISwitch **)targetSwitch {
+// Hàm hỗ trợ tạo dòng giao diện an toàn ARC
+- (UIView *)createRowWithFrame:(CGRect)frame title:(NSString *)title action:(SEL)action assignSwitch:(UISwitch *__strong *)targetSwitch {
+    UIView *rowView = [[UIView alloc] initWithFrame:frame];
+    rowView.userInteractionEnabled = YES;
+    
     UILabel *lbl = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, frame.size.width - 60, frame.size.height)];
     lbl.text = title;
     lbl.textColor = [UIColor whiteColor];
     lbl.font = [UIFont systemFontOfSize:13];
+    [rowView addSubview:lbl];
     
     UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(frame.size.width - 55, (frame.size.height - 30)/2, 50, 30)];
     [sw addTarget:self action:action forControlEvents:UIControlEventValueChanged];
-    
-    UIView *rowView = [[UIView alloc] initWithFrame:frame];
-    rowView.userInteractionEnabled = YES;
-    [rowView addSubview:lbl];
     [rowView addSubview:sw];
-    [self.menuContainer addSubview:rowView];
     
-    if (targetSwitch) *targetSwitch = sw;
+    if (targetSwitch) {
+        *targetSwitch = sw;
+    }
+    return rowView;
 }
 
 - (void)toggleAimHead:(UISwitch *)sender {
@@ -215,7 +222,7 @@ static void setupOverlayWindow(void) {
         [espDrawView.layer addSublayer:fovCircleLayer];
         
         overlayWindow.hidden = NO;
-        NSLog(@"[DudeHack] Đã khởi tạo thành công hệ thống Menu Pro!");
+        NSLog(@"[DudeHack] Đã khởi tạo thành công hệ thống Menu Pro chuẩn ARC!");
     });
 }
 
