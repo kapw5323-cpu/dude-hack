@@ -193,9 +193,8 @@ static void setupOverlayWindow(void) {
         if (overlayWindow) return;
         
         CGRect screenBounds = [UIScreen mainScreen].bounds;
-        overlayWindow = [[UIWindow instancetype] initWithFrame:screenBounds]; // hoặc [[UIWindow alloc] initWithFrame:screenBounds];
         overlayWindow = [[UIWindow alloc] initWithFrame:screenBounds];
-        overlayWindow.windowLevel = UIWindowLevelAlert + 100; // Yêu cầu: windowLevel = UIWindowLevelAlert + 100
+        overlayWindow.windowLevel = UIWindowLevelAlert + 100; // windowLevel = UIWindowLevelAlert + 100 chuẩn yêu cầu
         overlayWindow.backgroundColor = [UIColor clearColor];
         overlayWindow.userInteractionEnabled = YES;
         
@@ -221,12 +220,12 @@ static void setupOverlayWindow(void) {
         [espDrawView.layer addSublayer:fovCircleLayer];
         
         overlayWindow.hidden = NO;
-        NSLog(@"[DudeHack] Đã khởi tạo cửa sổ nổi với windowLevel chuẩn!");
+        NSLog(@"[DudeHack] Đã khởi tạo cửa sổ nổi chuẩn xác!");
     });
 }
 
 // ==========================================
-// HOOK LATEUPDATE VÀ TÍCH HỢP TRỰC TIẾP OFFSET
+// HOOK LATEUPDATE VÀ TÍCH HỢP OFFSETS THỰC CHIẾN
 // ==========================================
 void *(*old_PlayerCamera_LateUpdate)(void *self);
 void *hook_PlayerCamera_LateUpdate(void *self) {
@@ -248,7 +247,7 @@ void *hook_PlayerCamera_LateUpdate(void *self) {
         void *playerListArray = get_PlayerListOthers();
         if (!playerListArray) return;
         
-        // 2. Đọc chiều dài mảng tại Offset +0x18
+        // 2. Đọc chiều dài mảng tại Offset +0x18 (Cấu trúc IL2CPP Array)
         int length = 0;
         if (!safe_read((void *)((uintptr_t)playerListArray + 0x18), &length, sizeof(int)) || length <= 0) return;
         
@@ -281,9 +280,9 @@ void *hook_PlayerCamera_LateUpdate(void *self) {
                 enemyPos.y += 1.0f; // Aim Thân
             }
             
-            // 7. Ghi đè góc quay Camera an toàn qua offset Camera Yaw (0x44) và Pitch (0x40) nếu bật Aimbot
+            // 7. Xử lý ghi đè góc quay Aimbot qua Yaw (0x44) và Pitch (0x40) trên PlayerCamera
             if ((g_aimHeadEnabled || g_aimBodyEnabled) && g_playerCameraInstance) {
-                // Sử dụng safe_write_float để ghi trực tiếp vào con trỏYaw (0x44) và Pitch (0x40)
+                // Ví dụ tích hợp ghi đè an toàn:
                 // float *yawPtr = (float *)((uintptr_t)g_playerCameraInstance + 0x44);
                 // float *pitchPtr = (float *)((uintptr_t)g_playerCameraInstance + 0x40);
                 // safe_write_float(yawPtr, calculatedYaw);
