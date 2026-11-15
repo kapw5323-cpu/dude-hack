@@ -13,7 +13,6 @@ static float g_fovRadius = 150.0f;
 static UIWindow *overlayWindow = nil;
 static UIView *espDrawView = nil;
 static CAShapeLayer *fovCircleLayer = nil;
-static void *g_playerCameraInstance = NULL;
 
 // Hàm đọc bộ nhớ an toàn thuần C
 static bool safe_read(void *address, void *output, size_t size) {
@@ -71,10 +70,26 @@ static bool safe_write_float(void *address, float value) {
     [self.menuContainer addSubview:titleLabel];
     
     // Hàng Aim Đầu
-    [self addRowWithFrame:CGRectMake(10, 50, 220, 30) title:@"Aim Đầu (Head)" action:@selector(toggleAimHead:) assignSwitch:&_switchAimHead];
+    UILabel *lbl1 = [[UILabel alloc] initWithFrame:CGRectMake(10, 50, 150, 30)];
+    lbl1.text = @"Aim Đầu (Head)";
+    lbl1.textColor = [UIColor whiteColor];
+    lbl1.font = [UIFont systemFontOfSize:13];
+    [self.menuContainer addSubview:lbl1];
+    
+    self.switchAimHead = [[UISwitch alloc] initWithFrame:CGRectMake(175, 50, 50, 30)];
+    [self.switchAimHead addTarget:self action:@selector(toggleAimHead:) forControlEvents:UIControlEventValueChanged];
+    [self.menuContainer addSubview:self.switchAimHead];
     
     // Hàng Aim Thân
-    [self addRowWithFrame:CGRectMake(10, 90, 220, 30) title:@"Aim Thân (Body)" action:@selector(toggleAimBody:) assignSwitch:&_switchAimBody];
+    UILabel *lbl2 = [[UILabel alloc] initWithFrame:CGRectMake(10, 90, 150, 30)];
+    lbl2.text = @"Aim Thân (Body)";
+    lbl2.textColor = [UIColor whiteColor];
+    lbl2.font = [UIFont systemFontOfSize:13];
+    [self.menuContainer addSubview:lbl2];
+    
+    self.switchAimBody = [[UISwitch alloc] initWithFrame:CGRectMake(175, 90, 50, 30)];
+    [self.switchAimBody addTarget:self action:@selector(toggleAimBody:) forControlEvents:UIControlEventValueChanged];
+    [self.menuContainer addSubview:self.switchAimBody];
     
     // Slider chỉnh FOV
     UILabel *fovLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 140, 220, 20)];
@@ -100,23 +115,6 @@ static bool safe_write_float(void *address, float value) {
     collapseBtn.layer.cornerRadius = 22.5f;
     [collapseBtn addTarget:self action:@selector(toggleMenu:) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:collapseBtn];
-}
-
-- (void)addRowWithFrame:(CGRect)frame title:(NSString *)title action:(SEL)action assignSwitch:(UISwitch **)targetSwitch {
-    UILabel *lbl = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, frame.size.width - 60, frame.size.height)];
-    lbl.text = title;
-    lbl.textColor = [UIColor whiteColor];
-    lbl.font = [UIFont systemFontOfSize:13];
-    
-    UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(frame.size.width - 55, (frame.size.height - 30)/2, 50, 30)];
-    [sw addTarget:self action:action forControlEvents:UIControlEventValueChanged];
-    
-    UIView *rowView = [[UIView alloc] initWithFrame:frame];
-    [rowView addSubview:lbl];
-    [rowView addSubview:sw];
-    [self.menuContainer addSubview:rowView];
-    
-    if (targetSwitch) *targetSwitch = sw;
 }
 
 // Logic loại trừ lẫn nhau giữa Aim Đầu và Aim Thân
@@ -155,7 +153,7 @@ static bool safe_write_float(void *address, float value) {
     self.menuContainer.hidden = !self.menuContainer.hidden;
 }
 
-@end
+@end // Kết thúc @implementation ModMenuViewController chính xác
 
 // ==========================================
 // KHỞI TẠO CỬA SỔ NỔI BẤT TỬ
@@ -201,28 +199,16 @@ static void setupOverlayWindow(void) {
 // ==========================================
 void *(*old_PlayerCamera_LateUpdate)(void *self);
 void *hook_PlayerCamera_LateUpdate(void *self) {
-    if (self) {
-        g_playerCameraInstance = self;
-    }
-    
     void *result = old_PlayerCamera_LateUpdate(self);
-    
     if (!g_aimHeadEnabled && !g_aimBodyEnabled) {
         return result;
     }
-    
     return result;
 }
 
-// Constructor tiêm code
+// Constructor tiêm code chuẩn Logos
 %ctor {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         setupOverlayWindow();
     });
-    
-    /*
-    uintptr_t slide = _dyld_get_image_vmaddr_slide(0);
-    void *targetFunc = (void *)(slide + 0xOFFSET_LATEUPDATE);
-    MSHookFunction(targetFunc, (void *)hook_PlayerCamera_LateUpdate, (void **)&old_PlayerCamera_LateUpdate);
-    */
 }
