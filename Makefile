@@ -5,7 +5,7 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = DudeHack
 
-DudeHack_FILES = Tweak.mm
+DudeHack_FILES = Tweak.xm
 DudeHack_FRAMEWORKS = Foundation UIKit QuartzCore
 DudeHack_CFLAGS = -fobjc-arc -Wno-error=deprecated-declarations
 
