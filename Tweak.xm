@@ -16,9 +16,8 @@ static BOOL g_espBoxEnabled = NO;
 static BOOL g_espLineEnabled = NO;
 __unused static float g_fovRadius = 150.0f;
 
-// Biến quản lý UI toàn cục
-static UIView *menuView = nil;
-static UIButton *floatingHackBtn = nil;
+// Biến quản lý UI & Camera Instance toàn cục
+static UIWindow *overlayWindow = nil;
 static void *g_playerCameraInstance = NULL;
 
 // Hàm đọc bộ nhớ an toàn (Chống crash 100%)
@@ -44,86 +43,213 @@ __unused static bool safe_write_float(void *address, float value) {
     return true;
 }
 
-// Hàm lấy Window an toàn chuẩn iOS hiện đại
-static UIWindow *getGameWindow(void) {
-    for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
-        if ([scene isKindOfClass:[UIWindowScene class]]) {
-            for (UIWindow *win in scene.windows) {
-                if (win.isKeyWindow) {
-                    return win;
-                }
-            }
+// ==========================================
+// VIEW QUẢN LÝ CẢM ỨNG THÔNG MINH (HIT-TEST)
+// ==========================================
+@interface TouchManagerView : UIView
+@property (nonatomic, strong) UIView *menuContainer;
+@property (nonatomic, strong) UIButton *collapseBtn;
+@end
+
+@implementation TouchManagerView
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    // 1. Nếu nút HACK tròn đang hiện và bấm vào nó -> Nhận cảm ứng hack
+    if (self.collapseBtn && !self.collapseBtn.hidden) {
+        CGPoint p = [self convertPoint:point toView:self.collapseBtn];
+        if ([self.collapseBtn pointInside:p withEvent:event]) {
+            return [self.collapseBtn hitTest:p withEvent:event];
         }
     }
-    return [UIApplication sharedApplication].windows.firstObject;
+    
+    // 2. Nếu Menu To đang mở và bấm vào trong khung Menu -> Nhận cảm ứng hack
+    if (self.menuContainer && !self.menuContainer.hidden) {
+        CGPoint p = [self convertPoint:point toView:self.menuContainer];
+        if ([self.menuContainer pointInside:p withEvent:event]) {
+            return [self.menuContainer hitTest:p withEvent:event];
+        }
+    }
+    
+    // 3. Ngoài vùng menu: Trả về nil để ngón tay chạm XUYÊN THẲNG xuống game 100%!
+    return nil;
+}
+@end
+
+// ==========================================
+// GIAO DIỆN MOD MENU NỔI (KÉO THẢ & THU GỌN)
+// ==========================================
+@interface ModMenuViewController : UIViewController
+@property (nonatomic, strong) TouchManagerView *managerView;
+@property (nonatomic, strong) UIView *menuContainer;
+@property (nonatomic, strong) UIButton *collapseBtn;
+@property (nonatomic, strong) UISwitch *switchAimHead;
+@property (nonatomic, strong) UISwitch *switchAimBody;
+@property (nonatomic, strong) UISwitch *switchEspBox;
+@property (nonatomic, strong) UISwitch *switchEspLine;
+@end
+
+@implementation ModMenuViewController
+
+- (void)loadView {
+    self.managerView = [[TouchManagerView alloc] initWithFrame:[UIScreen mainScreen].bounds];
+    self.managerView.backgroundColor = [UIColor clearColor];
+    self.view = self.managerView;
 }
 
-// Xử lý ẩn/hiện Menu
-void toggleMenuVisibility(void) {
-    if (menuView) {
-        menuView.hidden = !menuView.hidden;
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    
+    // 1. Khung Menu To chính (Kéo thả tự do)
+    self.menuContainer = [[UIView alloc] initWithFrame:CGRectMake(40, 80, 240, 260)];
+    self.menuContainer.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.9f];
+    self.menuContainer.layer.cornerRadius = 12.0f;
+    self.menuContainer.layer.borderWidth = 1.5f;
+    self.menuContainer.layer.borderColor = [UIColor redColor].CGColor;
+    self.menuContainer.userInteractionEnabled = YES;
+    self.menuContainer.hidden = NO;
+    [self.view addSubview:self.menuContainer];
+    
+    self.managerView.menuContainer = self.menuContainer;
+    
+    // Thêm cử chỉ kéo thả cho Menu To
+    UIPanGestureRecognizer *panMenu = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handleMenuPan:)];
+    [self.menuContainer addGestureRecognizer:panMenu];
+    
+    // Tiêu đề
+    UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 10, 150, 30)];
+    titleLabel.text = @"DudeHack Pro";
+    titleLabel.textColor = [UIColor whiteColor];
+    titleLabel.font = [UIFont boldSystemFontOfSize:14];
+    [self.menuContainer addSubview:titleLabel];
+    
+    // Nút thu nhỏ [ - ]
+    UIButton *minimizeBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+    minimizeBtn.frame = CGRectMake(180, 10, 50, 30);
+    [minimizeBtn setTitle:@"[ - ]" forState:UIControlStateNormal];
+    [minimizeBtn setTitleColor:[UIColor yellowColor] forState:UIControlStateNormal];
+    minimizeBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
+    [minimizeBtn addTarget:self action:@selector(minimizeMenu:) forControlEvents:UIControlEventTouchUpInside];
+    [self.menuContainer addSubview:minimizeBtn];
+    
+    // Các hàng tính năng
+    UIView *row1 = [self createRowWithFrame:CGRectMake(10, 50, 220, 30) title:@"Aim Đầu (Head)" action:@selector(toggleAimHead:) assignSwitch:&_switchAimHead];
+    [self.menuContainer addSubview:row1];
+    
+    UIView *row2 = [self createRowWithFrame:CGRectMake(10, 90, 220, 30) title:@"Aim Thân (Body)" action:@selector(toggleAimBody:) assignSwitch:&_switchAimBody];
+    [self.menuContainer addSubview:row2];
+    
+    UIView *row3 = [self createRowWithFrame:CGRectMake(10, 130, 220, 30) title:@"ESP Khung (Box)" action:@selector(toggleEspBox:) assignSwitch:&_switchEspBox];
+    [self.menuContainer addSubview:row3];
+    
+    UIView *row4 = [self createRowWithFrame:CGRectMake(10, 170, 220, 30) title:@"ESP Đường (Line)" action:@selector(toggleEspLine:) assignSwitch:&_switchEspLine];
+    [self.menuContainer addSubview:row4];
+    
+    // 2. Menu Bé (Nút HACK tròn nổi, kéo thả được và bấm để mở lại Menu To)
+    self.collapseBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+    self.collapseBtn.frame = CGRectMake(40, 40, 45, 45);
+    self.collapseBtn.backgroundColor = [UIColor redColor];
+    [self.collapseBtn setTitle:@"HACK" forState:UIControlStateNormal];
+    [self.collapseBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    self.collapseBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+    self.collapseBtn.layer.cornerRadius = 22.5f;
+    self.collapseBtn.userInteractionEnabled = YES;
+    self.collapseBtn.hidden = YES;
+    [self.collapseBtn addTarget:self action:@selector(restoreMenu:) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:self.collapseBtn];
+    
+    self.managerView.collapseBtn = self.collapseBtn;
+    
+    // Thêm cử chỉ kéo thả cho Menu Bé
+    UIPanGestureRecognizer *panCollapse = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handleCollapsePan:)];
+    [self.collapseBtn addGestureRecognizer:panCollapse];
+}
+
+- (void)handleMenuPan:(UIPanGestureRecognizer * __nonnull)gesture {
+    CGPoint translation = [gesture translationInView:self.view];
+    UIView *menu = self.menuContainer;
+    menu.center = CGPointMake(menu.center.x + translation.x, menu.center.y + translation.y);
+    [gesture setTranslation:CGPointZero inView:self.view];
+}
+
+- (void)handleCollapsePan:(UIPanGestureRecognizer * __nonnull)gesture {
+    CGPoint translation = [gesture translationInView:self.view];
+    UIButton *btn = self.collapseBtn;
+    btn.center = CGPointMake(btn.center.x + translation.x, btn.center.y + translation.y);
+    [gesture setTranslation:CGPointZero inView:self.view];
+}
+
+- (void)minimizeMenu:(UIButton * __nonnull)sender {
+    self.menuContainer.hidden = YES;
+    self.collapseBtn.hidden = NO;
+}
+
+- (void)restoreMenu:(UIButton * __nonnull)sender {
+    self.collapseBtn.hidden = YES;
+    self.menuContainer.hidden = NO;
+}
+
+- (UIView *)createRowWithFrame:(CGRect)frame title:(NSString *)title action:(SEL)action assignSwitch:(UISwitch *__strong *)targetSwitch {
+    UIView *rowView = [[UIView alloc] initWithFrame:frame];
+    rowView.userInteractionEnabled = YES;
+    
+    UILabel *lbl = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, frame.size.width - 60, frame.size.height)];
+    lbl.text = title;
+    lbl.textColor = [UIColor whiteColor];
+    lbl.font = [UIFont systemFontOfSize:13];
+    [rowView addSubview:lbl];
+    
+    UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(frame.size.width - 55, (frame.size.height - 30)/2, 50, 30)];
+    [sw addTarget:self action:action forControlEvents:UIControlEventValueChanged];
+    [rowView addSubview:sw];
+    
+    if (targetSwitch) {
+        *targetSwitch = sw;
+    }
+    return rowView;
+}
+
+- (void)toggleAimHead:(UISwitch * __nonnull)sender {
+    g_aimHeadEnabled = sender.isOn;
+    if (g_aimHeadEnabled) {
+        g_aimBodyEnabled = NO;
+        if (self.switchAimBody) self.switchAimBody.on = NO;
     }
 }
 
-// Xử lý kéo thả nút HACK
-void handleButtonPan(UIPanGestureRecognizer *gesture) {
-    if (floatingHackBtn) {
-        CGPoint translation = [gesture translationInView:floatingHackBtn.superview];
-        floatingHackBtn.center = CGPointMake(floatingHackBtn.center.x + translation.x, floatingHackBtn.center.y + translation.y);
-        [gesture setTranslation:CGPointZero inView:floatingHackBtn.superview];
+- (void)toggleAimBody:(UISwitch * __nonnull)sender {
+    g_aimBodyEnabled = sender.isOn;
+    if (g_aimBodyEnabled) {
+        g_aimHeadEnabled = NO;
+        if (self.switchAimHead) self.switchAimHead.on = NO;
     }
 }
 
+- (void)toggleEspBox:(UISwitch * __nonnull)sender {
+    g_espBoxEnabled = sender.isOn;
+}
+
+- (void)toggleEspLine:(UISwitch * __nonnull)sender {
+    g_espLineEnabled = sender.isOn;
+}
+
+@end
+
 // ==========================================
-// HÀM TẠO GIAO DIỆN NỔI GỌN NHẸ (BÁM TRỰC TIẾP VÀO GAME)
+// KHỞI TẠO CỬA SỔ NỔI AN TOÀN
 // ==========================================
-static void setupHackUI(void) {
+static void setupOverlayWindow(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
-        UIWindow *keyWindow = getGameWindow();
-        if (!keyWindow) return;
+        if (overlayWindow) return;
         
-        if (floatingHackBtn) return;
+        CGRect screenBounds = [UIScreen mainScreen].bounds;
+        overlayWindow = [[UIWindow alloc] initWithFrame:screenBounds];
+        overlayWindow.windowLevel = UIWindowLevelAlert + 100;
+        overlayWindow.backgroundColor = [UIColor clearColor];
+        overlayWindow.userInteractionEnabled = YES;
         
-        // 1. Nút HACK nổi tròn
-        floatingHackBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-        floatingHackBtn.frame = CGRectMake(30, 100, 45, 45);
-        floatingHackBtn.backgroundColor = [UIColor redColor];
-        [floatingHackBtn setTitle:@"HACK" forState:UIControlStateNormal];
-        [floatingHackBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        floatingHackBtn.titleLabel.font = [UIFont boldSystemFontOfSize:11];
-        floatingHackBtn.layer.cornerRadius = 22.5f;
-        floatingHackBtn.userInteractionEnabled = YES;
+        ModMenuViewController *menuVC = [[ModMenuViewController alloc] init];
+        overlayWindow.rootViewController = menuVC;
         
-        [floatingHackBtn addTarget:nil action:@selector(toggleMenuVisibility) forControlEvents:UIControlEventTouchUpInside];
-        
-        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:nil action:@selector(handleButtonPan:)];
-        [floatingHackBtn addGestureRecognizer:pan];
-        
-        [keyWindow addSubview:floatingHackBtn];
-        
-        // 2. Khung Menu To chính (Mặc định ẩn để game nhận cảm ứng 100%)
-        menuView = [[UIView alloc] initWithFrame:CGRectMake(80, 80, 240, 290)];
-        menuView.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.9f];
-        menuView.layer.cornerRadius = 10.0f;
-        menuView.layer.borderWidth = 1.5f;
-        menuView.layer.borderColor = [UIColor redColor].CGColor;
-        menuView.hidden = YES;
-        [keyWindow addSubview:menuView];
-        
-        // Tiêu đề & Nút đóng [X]
-        UILabel *titleLbl = [[UILabel alloc] initWithFrame:CGRectMake(10, 10, 160, 30)];
-        titleLbl.text = @"DudeHack Pro";
-        titleLbl.textColor = [UIColor whiteColor];
-        titleLbl.font = [UIFont boldSystemFontOfSize:13];
-        [menuView addSubview:titleLbl];
-        
-        UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-        closeBtn.frame = CGRectMake(190, 10, 40, 30);
-        [closeBtn setTitle:@"[X]" forState:UIControlStateNormal];
-        [closeBtn setTitleColor:[UIColor yellowColor] forState:UIControlStateNormal];
-        closeBtn.titleLabel.font = [UIFont boldSystemFontOfSize:13];
-        [closeBtn addTarget:nil action:@selector(toggleMenuVisibility) forControlEvents:UIControlEventTouchUpInside];
-        [menuView addSubview:closeBtn];
+        overlayWindow.hidden = NO;
     });
 }
 
@@ -198,6 +324,6 @@ void *hook_PlayerCamera_LateUpdate(void *self) {
 // Constructor tiêm code
 %ctor {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        setupHackUI();
+        setupOverlayWindow();
     });
 }
