@@ -19,10 +19,8 @@ static float g_fovRadius = 150.0f;
 static UIWindow *overlayWindow = nil;
 static UIView *espDrawView = nil;
 static CAShapeLayer *fovCircleLayer = nil;
-static NSMutableArray *espBoxesArray = nil;
-static NSMutableArray *espLinesArray = nil;
 
-// Hàm đọc bộ nhớ an toàn thuần C
+// Hàm đọc bộ nhớ an toàn thuần C (__unused để tránh lỗi -Werror)
 __unused static bool safe_read(void *address, void *output, size_t size) {
     if (!address || !output) return false;
     vm_size_t outSize = 0;
@@ -30,7 +28,7 @@ __unused static bool safe_read(void *address, void *output, size_t size) {
     return (kr == KERN_SUCCESS && outSize == size);
 }
 
-// Hàm ghi bộ nhớ an toàn cho float (Yaw / Pitch)
+// Hàm ghi bộ nhớ an toàn cho float (__unused để tránh lỗi -Werror)
 __unused static bool safe_write_float(void *address, float value) {
     if (!address) return false;
     mach_port_t task = mach_task_self();
@@ -46,7 +44,7 @@ __unused static bool safe_write_float(void *address, float value) {
 }
 
 // ==========================================
-// GIAO DIỆN MOD MENU NỔI (ĐÃ FIX LỖI CHẶN CHẠM GAME)
+// GIAO DIỆN MOD MENU NỔI (ĐÃ FIX CHẶN CHẠM GAME)
 // ==========================================
 @interface ModMenuViewController : UIViewController
 @property (nonatomic, strong) UIView *menuContainer;
@@ -61,8 +59,7 @@ __unused static bool safe_write_float(void *address, float value) {
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.view.backgroundColor = [UIColor clearColor];
-    // QUAN TRỌNG: Cả view controller root phải để NO để chạm xuyên thấu, chỉ bật cho khung menu con bên trong!
-    self.view.userInteractionEnabled = NO;
+    self.view.userInteractionEnabled = NO; // Cho phép chạm xuyên thấu màn hình game
     
     // Khung Menu chính (Bật tương tác riêng cho khung này)
     self.menuContainer = [[UIView alloc] initWithFrame:CGRectMake(20, 80, 240, 320)];
@@ -70,7 +67,7 @@ __unused static bool safe_write_float(void *address, float value) {
     self.menuContainer.layer.cornerRadius = 12.0f;
     self.menuContainer.layer.borderWidth = 1.5f;
     self.menuContainer.layer.borderColor = [UIColor redColor].CGColor;
-    self.menuContainer.userInteractionEnabled = YES; // Chỉ cho phép bấm trong khung Menu
+    self.menuContainer.userInteractionEnabled = YES;
     [self.view addSubview:self.menuContainer];
     
     // Tiêu đề Menu
@@ -107,7 +104,7 @@ __unused static bool safe_write_float(void *address, float value) {
     [fovSlider addTarget:self action:@selector(sliderChanged:) forControlEvents:UIControlEventValueChanged];
     [self.menuContainer addSubview:fovSlider];
     
-    // Nút thu nhỏ/mở Menu nhanh hình tròn chữ HACK (Phải đặt userInteractionEnabled = YES để bấm được)
+    // Nút thu nhỏ/mở Menu nhanh hình tròn chữ HACK
     UIButton *collapseBtn = [UIButton buttonWithType:UIButtonTypeCustom];
     collapseBtn.frame = CGRectMake(20, 40, 45, 45);
     collapseBtn.backgroundColor = [UIColor redColor];
@@ -115,7 +112,7 @@ __unused static bool safe_write_float(void *address, float value) {
     [collapseBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     collapseBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
     collapseBtn.layer.cornerRadius = 22.5f;
-    collapseBtn.userInteractionEnabled = YES; 
+    collapseBtn.userInteractionEnabled = YES;
     [collapseBtn addTarget:self action:@selector(toggleMenu:) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:collapseBtn];
 }
@@ -194,20 +191,17 @@ static void setupOverlayWindow(void) {
         overlayWindow = [[UIWindow alloc] initWithFrame:screenBounds];
         overlayWindow.windowLevel = UIWindowLevelAlert + 100;
         overlayWindow.backgroundColor = [UIColor clearColor];
-        // Cực kỳ quan trọng: Để window nhận tương tác, nhưng view bên trong quản lý xuyên thấu
-        overlayWindow.userInteractionEnabled = YES; 
+        overlayWindow.userInteractionEnabled = YES;
         
         ModMenuViewController *menuVC = [[ModMenuViewController alloc] init];
         overlayWindow.rootViewController = menuVC;
         
-        // Lớp vẽ ESP (Hoàn toàn trong suốt và không chặn cảm ứng)
         espDrawView = [[UIView alloc] initWithFrame:screenBounds];
         espDrawView.backgroundColor = [UIColor clearColor];
         espDrawView.userInteractionEnabled = NO;
         [menuVC.view addSubview:espDrawView];
         [menuVC.view sendSubviewToBack:espDrawView];
         
-        // Vòng FOV đỏ giữa màn hình
         fovCircleLayer = [CAShapeLayer layer];
         UIBezierPath *path = [UIBezierPath bezierPathWithArcCenter:CGPointMake(screenBounds.size.width/2, screenBounds.size.height/2)
                                                           radius:g_fovRadius
@@ -220,11 +214,8 @@ static void setupOverlayWindow(void) {
         fovCircleLayer.lineWidth = 1.2f;
         [espDrawView.layer addSublayer:fovCircleLayer];
         
-        espBoxesArray = [[NSMutableArray alloc] init];
-        espLinesArray = [[NSMutableArray alloc] init];
-        
         overlayWindow.hidden = NO;
-        NSLog(@"[DudeHack] Đã fix lỗi chặn chạm và khởi tạo thành công hệ thống ESP!");
+        NSLog(@"[DudeHack] Đã khởi tạo thành công hệ thống Menu Pro!");
     });
 }
 
