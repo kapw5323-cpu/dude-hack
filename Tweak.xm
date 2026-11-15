@@ -2,14 +2,25 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 
+static UIWindow *getKeyWindow(void) {
+    UIWindow *foundWindow = nil;
+    for (UIWindow *window in [UIApplication sharedApplication].windows) {
+        if (window.isKeyWindow) {
+            foundWindow = window;
+            break;
+        }
+    }
+    return foundWindow ?: [UIApplication sharedApplication].windows.firstObject;
+}
+
 __attribute__((constructor))
 static void init() {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        UIWindow *window = [UIApplication sharedApplication].keyWindow;
+        UIWindow *window = getKeyWindow();
         if (!window) return;
         
         UIView *circleView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 300, 300)];
-        circleView.center = CGPointMake(window.bounds.size.width / 2, window.bounds.size.height / 2);
+        circleView.center = CGPointMake(window.bounds.size.width / 2.0, window.bounds.size.height / 2.0);
         circleView.backgroundColor = [UIColor clearColor];
         
         CAShapeLayer *circleLayer = [CAShapeLayer layer];
