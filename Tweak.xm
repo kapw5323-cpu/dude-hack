@@ -46,10 +46,43 @@ __unused static bool safe_write_float(void *address, float value) {
 }
 
 // ==========================================
+// CUSTOM VIEW ĐỂ CHẠM XUYÊN THẤU THÔNG MINH
+// ==========================================
+@interface TouchThroughView : UIView
+@property (nonatomic, strong) UIView *menuContainer;
+@property (nonatomic, strong) UIButton *collapseBtn;
+@end
+
+@implementation TouchThroughView
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    // Nếu nút HACK đang hiển thị và ngón tay bấm vào nút HACK -> Nhận cảm ứng
+    if (self.collapseBtn && !self.collapseBtn.hidden) {
+        CGPoint convertedPoint = [self convertPoint:point toView:self.collapseBtn];
+        if ([self.collapseBtn pointInside:convertedPoint withEvent:event]) {
+            return self.collapseBtn;
+        }
+    }
+    
+    // Nếu Menu đang mở và ngón tay bấm vào trong khung Menu -> Nhận cảm ứng
+    if (self.menuContainer && !self.menuContainer.hidden) {
+        CGPoint convertedPoint = [self convertPoint:point toView:self.menuContainer];
+        if ([self.menuContainer pointInside:convertedPoint withEvent:event]) {
+            return [self.menuContainer hitTest:convertedPoint withEvent:event];
+        }
+    }
+    
+    // Ngược lại, trả về nil để ngón tay chạm XUYÊN THẲNG xuống game!
+    return nil;
+}
+@end
+
+// ==========================================
 // GIAO DIỆN MOD MENU NỔI (FLOATING UI)
 // ==========================================
 @interface ModMenuViewController : UIViewController
+@property (nonatomic, strong) TouchThroughView *customRootView;
 @property (nonatomic, strong) UIView *menuContainer;
+@property (nonatomic, strong) UIButton *collapseBtn;
 @property (nonatomic, strong) UISwitch *switchAimHead;
 @property (nonatomic, strong) UISwitch *switchAimBody;
 @property (nonatomic, strong) UISwitch *switchEspBox;
@@ -58,12 +91,17 @@ __unused static bool safe_write_float(void *address, float value) {
 
 @implementation ModMenuViewController
 
+- (void)loadView {
+    // Sử dụng TouchThroughView làm root view để quản lý cảm ứng xuyên thấu tối ưu
+    self.customRootView = [[TouchThroughView alloc] initWithFrame:[UIScreen mainScreen].bounds];
+    self.customRootView.backgroundColor = [UIColor clearColor];
+    self.view = self.customRootView;
+}
+
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = [UIColor clearColor];
-    self.view.userInteractionEnabled = NO; // Cho phép chạm xuyên thấu game
     
-    // Khung Menu chính
+    // 1. Khung Menu chính
     self.menuContainer = [[UIView alloc] initWithFrame:CGRectMake(20, 80, 240, 320)];
     self.menuContainer.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.85];
     self.menuContainer.layer.cornerRadius = 12.0f;
@@ -71,6 +109,9 @@ __unused static bool safe_write_float(void *address, float value) {
     self.menuContainer.layer.borderColor = [UIColor redColor].CGColor;
     self.menuContainer.userInteractionEnabled = YES;
     [self.view addSubview:self.menuContainer];
+    
+    // Truyền reference vào TouchThroughView
+    self.customRootView.menuContainer = self.menuContainer;
     
     // Tiêu đề
     UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 10, 220, 30)];
@@ -107,17 +148,20 @@ __unused static bool safe_write_float(void *address, float value) {
     [fovSlider addTarget:self action:@selector(sliderChanged:) forControlEvents:UIControlEventValueChanged];
     [self.menuContainer addSubview:fovSlider];
     
-    // Nút ẩn/hiện Menu nhanh (HACK)
-    UIButton *collapseBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-    collapseBtn.frame = CGRectMake(20, 40, 45, 45);
-    collapseBtn.backgroundColor = [UIColor redColor];
-    [collapseBtn setTitle:@"HACK" forState:UIControlStateNormal];
-    [collapseBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    collapseBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
-    collapseBtn.layer.cornerRadius = 22.5f;
-    collapseBtn.userInteractionEnabled = YES;
-    [collapseBtn addTarget:self action:@selector(toggleMenu:) forControlEvents:UIControlEventTouchUpInside];
-    [self.view addSubview:collapseBtn];
+    // 2. Nút ẩn/hiện Menu nhanh (HACK)
+    self.collapseBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+    self.collapseBtn.frame = CGRectMake(20, 40, 45, 45);
+    self.collapseBtn.backgroundColor = [UIColor redColor];
+    [self.collapseBtn setTitle:@"HACK" forState:UIControlStateNormal];
+    [self.collapseBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    self.collapseBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+    self.collapseBtn.layer.cornerRadius = 22.5f;
+    self.collapseBtn.userInteractionEnabled = YES;
+    [self.collapseBtn addTarget:self action:@selector(toggleMenu:) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:self.collapseBtn];
+    
+    // Truyền reference nút HACK vào TouchThroughView
+    self.customRootView.collapseBtn = self.collapseBtn;
 }
 
 - (UIView *)createRowWithFrame:(CGRect)frame title:(NSString *)title action:(SEL)action assignSwitch:(UISwitch *__strong *)targetSwitch {
@@ -194,7 +238,7 @@ static void setupOverlayWindow(void) {
         
         CGRect screenBounds = [UIScreen mainScreen].bounds;
         overlayWindow = [[UIWindow alloc] initWithFrame:screenBounds];
-        overlayWindow.windowLevel = UIWindowLevelAlert + 100; // windowLevel = UIWindowLevelAlert + 100 chuẩn yêu cầu
+        overlayWindow.windowLevel = UIWindowLevelAlert + 100;
         overlayWindow.backgroundColor = [UIColor clearColor];
         overlayWindow.userInteractionEnabled = YES;
         
@@ -220,7 +264,7 @@ static void setupOverlayWindow(void) {
         [espDrawView.layer addSublayer:fovCircleLayer];
         
         overlayWindow.hidden = NO;
-        NSLog(@"[DudeHack] Đã khởi tạo cửa sổ nổi chuẩn xác!");
+        NSLog(@"[DudeHack] Đã khởi tạo TouchThroughView thành công!");
     });
 }
 
@@ -230,7 +274,7 @@ static void setupOverlayWindow(void) {
 void *(*old_PlayerCamera_LateUpdate)(void *self);
 void *hook_PlayerCamera_LateUpdate(void *self) {
     if (self) {
-        g_playerCameraInstance = self; // Lưu instance PlayerCamera để ghi Yaw (0x44) & Pitch (0x40)
+        g_playerCameraInstance = self;
     }
     
     void *result = old_PlayerCamera_LateUpdate ? old_PlayerCamera_LateUpdate(self) : NULL;
@@ -241,13 +285,13 @@ void *hook_PlayerCamera_LateUpdate(void *self) {
     
     dispatch_async(dispatch_get_main_queue(), ^{
         // 1. Gọi PhotonNetwork::get_PlayerListOthers() lấy danh sách địch
-        void *(*get_PlayerListOthers)(void) = (void *(*)(void))0x0; // Thay địa chỉ hàm thật khi có
+        void *(*get_PlayerListOthers)(void) = (void *(*)(void))0x0; 
         if (!get_PlayerListOthers) return;
         
         void *playerListArray = get_PlayerListOthers();
         if (!playerListArray) return;
         
-        // 2. Đọc chiều dài mảng tại Offset +0x18 (Cấu trúc IL2CPP Array)
+        // 2. Đọc chiều dài mảng tại Offset +0x18
         int length = 0;
         if (!safe_read((void *)((uintptr_t)playerListArray + 0x18), &length, sizeof(int)) || length <= 0) return;
         
@@ -262,7 +306,7 @@ void *hook_PlayerCamera_LateUpdate(void *self) {
             // 4. Kiểm tra Máu (Health) tại Offset 0x28 (Kiểu Float)
             float health = 0.0f;
             if (!safe_read((void *)((uintptr_t)playerObj + 0x28), &health, sizeof(float)) || health <= 0.0f) {
-                continue; // Bỏ qua nếu là xác chết hoặc máu <= 0
+                continue; 
             }
             
             // 5. Lấy Transform tại Offset 0x50 của class Player
@@ -273,16 +317,14 @@ void *hook_PlayerCamera_LateUpdate(void *self) {
             Vector3 enemyPos;
             if (!safe_read((void *)((uintptr_t)transformObj + 0x38), &enemyPos, sizeof(Vector3))) continue;
             
-            // Tinh chỉnh trục Y tùy theo Aim Đầu hay Aim Thân
             if (g_aimHeadEnabled) {
-                enemyPos.y += 1.5f; // Aim Đầu
+                enemyPos.y += 1.5f; 
             } else if (g_aimBodyEnabled) {
-                enemyPos.y += 1.0f; // Aim Thân
+                enemyPos.y += 1.0f; 
             }
             
-            // 7. Xử lý ghi đè góc quay Aimbot qua Yaw (0x44) và Pitch (0x40) trên PlayerCamera
+            // 7. Ghi đè góc quay Aimbot qua Yaw (0x44) và Pitch (0x40)
             if ((g_aimHeadEnabled || g_aimBodyEnabled) && g_playerCameraInstance) {
-                // Ví dụ tích hợp ghi đè an toàn:
                 // float *yawPtr = (float *)((uintptr_t)g_playerCameraInstance + 0x44);
                 // float *pitchPtr = (float *)((uintptr_t)g_playerCameraInstance + 0x40);
                 // safe_write_float(yawPtr, calculatedYaw);
