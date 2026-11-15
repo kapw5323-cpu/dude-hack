@@ -44,18 +44,31 @@ __unused static bool safe_write_float(void *address, float value) {
     return true;
 }
 
+// Hàm lấy Window an toàn chuẩn iOS hiện đại (Tránh lỗi deprecated keyWindow)
+static UIWindow *getGameWindow(void) {
+    for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if ([scene isKindOfClass:[UIWindowScene class]]) {
+            for (UIWindow *win in scene.windows) {
+                if (win.isKeyWindow) {
+                    return win;
+                }
+            }
+        }
+    }
+    return [UIApplication sharedApplication].windows.firstObject;
+}
+
 // ==========================================
 // HÀM TẠO GIAO DIỆN NỔI GỌN NHẸ (BÁM TRỰC TIẾP VÀO GAME)
 // ==========================================
 static void setupHackUI(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
-        UIWindow *keyWindow = [[UIApplication sharedApplication] keyWindow];
+        UIWindow *keyWindow = getGameWindow();
         if (!keyWindow) return;
         
-        // Nếu nút hack đã tồn tại thì không tạo lại
         if (floatingHackBtn) return;
         
-        // 1. Nút HACK nổi tròn (Luôn nổi trên cùng, kéo đi bất kỳ đâu)
+        // 1. Nút HACK nổi tròn
         floatingHackBtn = [UIButton buttonWithType:UIButtonTypeCustom];
         floatingHackBtn.frame = CGRectMake(30, 100, 45, 45);
         floatingHackBtn.backgroundColor = [UIColor redColor];
@@ -64,27 +77,27 @@ static void setupHackUI(void) {
         floatingHackBtn.titleLabel.font = [UIFont boldSystemFontOfSize:11];
         floatingHackBtn.layer.cornerRadius = 22.5f;
         floatingHackBtn.userInteractionEnabled = YES;
+        
+        // Dùng UIControlEventTouchUpInside kết hợp Action block chuẩn
         [floatingHackBtn addTarget:nil action:@selector(toggleMenuVisibility) forControlEvents:UIControlEventTouchUpInside];
         
-        // Thêm cử chỉ kéo thả cho nút HACK
         UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:nil action:@selector(handleButtonPan:)];
-        // Dùng block hoặc add target xử lý kéo nút
         [floatingHackBtn addGestureRecognizer:pan];
         
         [keyWindow addSubview:floatingHackBtn];
         
-        // 2. Khung Menu To chính (Mặc định ẩn)
+        // 2. Khung Menu To chính (Mặc định ẩn để game nhận cảm ứng 100%)
         menuView = [[UIView alloc] initWithFrame:CGRectMake(80, 80, 240, 290)];
         menuView.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.9f];
         menuView.layer.cornerRadius = 10.0f;
         menuView.layer.borderWidth = 1.5f;
         menuView.layer.borderColor = [UIColor redColor].CGColor;
-        menuView.hidden = YES; // Mặc định ẩn để game nhận cảm ứng 100%
+        menuView.hidden = YES;
         [keyWindow addSubview:menuView];
         
         // Tiêu đề & Nút đóng [X]
         UILabel *titleLbl = [[UILabel alloc] initWithFrame:CGRectMake(10, 10, 160, 30)];
-        titleLbl.text = @"🔥 DudeHack Pro 🔥";
+        titleLbl.text = @"DudeHack Pro";
         titleLbl.textColor = [UIColor whiteColor];
         titleLbl.font = [UIFont boldSystemFontOfSize:13];
         [menuView addSubview:titleLbl];
@@ -97,10 +110,7 @@ static void setupHackUI(void) {
         [closeBtn addTarget:nil action:@selector(toggleMenuVisibility) forControlEvents:UIControlEventTouchUpInside];
         [menuView addSubview:closeBtn];
         
-        // Thêm các công tắc tính năng vào menu
-        // (Aim Đầu, Aim Thân, ESP Box, ESP Line, FOV Slider...)
-        
-        NSLog(@"[DudeHack] Đã nhúng UI trực tiếp vào game thành công, cảm ứng zin 100%!");
+        NSLog(@"[DudeHack] Da nhung UI thanh cong!");
     });
 }
 
