@@ -4,12 +4,10 @@
 #include <mach/mach.h>
 #include <substrate.h>
 
-// Trạng thái các tính năng Mod Menu (Mặc định tắt toàn bộ)
+// Trạng thái các tính năng Mod Menu
 static BOOL g_aimHeadEnabled = NO;
 static BOOL g_aimBodyEnabled = NO;
-static BOOL g_espBoxEnabled = NO;
-static BOOL g_espLineEnabled = NO;
-static float g_fovRadius = 150.0f; // Bán kính vòng FOV
+static float g_fovRadius = 150.0f;
 
 // Biến quản lý UI toàn cục
 static UIWindow *overlayWindow = nil;
@@ -17,7 +15,7 @@ static UIView *espDrawView = nil;
 static CAShapeLayer *fovCircleLayer = nil;
 static void *g_playerCameraInstance = NULL;
 
-// Hàm đọc bộ nhớ an toàn (Dùng thuần C, không dùng Template để tránh lỗi biên dịch Theos)
+// Hàm đọc bộ nhớ an toàn thuần C
 static bool safe_read(void *address, void *output, size_t size) {
     if (!address || !output) return false;
     vm_size_t outSize = 0;
@@ -25,7 +23,7 @@ static bool safe_read(void *address, void *output, size_t size) {
     return (kr == KERN_SUCCESS && outSize == size);
 }
 
-// Hàm ghi bộ nhớ an toàn cho giá trị float (Yaw / Pitch)
+// Hàm ghi bộ nhớ an toàn cho float (Yaw / Pitch)
 static bool safe_write_float(void *address, float value) {
     if (!address) return false;
     mach_port_t task = mach_task_self();
@@ -41,7 +39,7 @@ static bool safe_write_float(void *address, float value) {
 }
 
 // ==========================================
-// GIAO DIỆN MOD MENU NỔI (FLOATING UI MENU)
+// GIAO DIỆN MOD MENU NỔI
 // ==========================================
 @interface ModMenuViewController : UIViewController
 @property (nonatomic, strong) UIView *menuContainer;
@@ -56,7 +54,7 @@ static bool safe_write_float(void *address, float value) {
     self.view.backgroundColor = [UIColor clearColor];
     
     // Khung Menu chính
-    self.menuContainer = [[UIView alloc] initWithFrame:CGRectMake(20, 80, 240, 280)];
+    self.menuContainer = [[UIView alloc] initWithFrame:CGRectMake(20, 80, 240, 260)];
     self.menuContainer.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.85];
     self.menuContainer.layer.cornerRadius = 12.0f;
     self.menuContainer.layer.borderWidth = 1.5f;
@@ -72,25 +70,27 @@ static bool safe_write_float(void *address, float value) {
     titleLabel.textAlignment = NSTextAlignmentCenter;
     [self.menuContainer addSubview:titleLabel];
     
-    // Các hàng chức năng
-    [self addMenuRow:CGRectMake(10, 50, 220, 30) title:@"Aim Đầu (Head)" action:@selector(toggleAimHead:) isSwitch:&_switchAimHead];
-    [self addMenuRow:CGRectMake(10, 90, 220, 30) title:@"Aim Thân (Body)" action:@selector(toggleAimBody:) isSwitch:&_switchAimBody];
+    // Hàng Aim Đầu
+    [self addRowWithFrame:CGRectMake(10, 50, 220, 30) title:@"Aim Đầu (Head)" action:@selector(toggleAimHead:) assignSwitch:&_switchAimHead];
+    
+    // Hàng Aim Thân
+    [self addRowWithFrame:CGRectMake(10, 90, 220, 30) title:@"Aim Thân (Body)" action:@selector(toggleAimBody:) assignSwitch:&_switchAimBody];
     
     // Slider chỉnh FOV
-    UILabel *fovLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 150, 220, 20)];
+    UILabel *fovLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 140, 220, 20)];
     fovLabel.text = @"Kích thước FOV";
     fovLabel.textColor = [UIColor lightGrayColor];
     fovLabel.font = [UIFont systemFontOfSize:12];
     [self.menuContainer addSubview:fovLabel];
     
-    UISlider *fovSlider = [[UISlider alloc] initWithFrame:CGRectMake(10, 175, 220, 20)];
+    UISlider *fovSlider = [[UISlider alloc] initWithFrame:CGRectMake(10, 165, 220, 20)];
     fovSlider.minimumValue = 50.0f;
     fovSlider.maximumValue = 300.0f;
     fovSlider.value = g_fovRadius;
     [fovSlider addTarget:self action:@selector(sliderChanged:) forControlEvents:UIControlEventValueChanged];
     [self.menuContainer addSubview:fovSlider];
     
-    // Nút thu nhỏ/mở Menu nhanh
+    // Nút thu nhỏ/mở Menu nhanh hình tròn chữ HACK
     UIButton *collapseBtn = [UIButton buttonWithType:UIButtonTypeCustom];
     collapseBtn.frame = CGRectMake(20, 40, 45, 45);
     collapseBtn.backgroundColor = [UIColor redColor];
@@ -102,7 +102,7 @@ static bool safe_write_float(void *address, float value) {
     [self.view addSubview:collapseBtn];
 }
 
-- (void)addMenuRow:(CGRect)frame title:(NSString *)title action:(SEL)action isSwitch:(UISwitch **)outSwitch {
+- (void)addRowWithFrame:(CGRect)frame title:(NSString *)title action:(SEL)action assignSwitch:(UISwitch **)targetSwitch {
     UILabel *lbl = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, frame.size.width - 60, frame.size.height)];
     lbl.text = title;
     lbl.textColor = [UIColor whiteColor];
@@ -116,7 +116,7 @@ static bool safe_write_float(void *address, float value) {
     [rowView addSubview:sw];
     [self.menuContainer addSubview:rowView];
     
-    if (outSwitch) *outSwitch = sw;
+    if (targetSwitch) *targetSwitch = sw;
 }
 
 // Logic loại trừ lẫn nhau giữa Aim Đầu và Aim Thân
@@ -207,12 +207,10 @@ void *hook_PlayerCamera_LateUpdate(void *self) {
     
     void *result = old_PlayerCamera_LateUpdate(self);
     
-    // Nếu chưa bật Aim thì bỏ qua
     if (!g_aimHeadEnabled && !g_aimBodyEnabled) {
         return result;
     }
     
-    // Logic Aimbot sẽ viết ở đây khi test xong Menu
     return result;
 }
 
