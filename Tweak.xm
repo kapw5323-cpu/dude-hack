@@ -194,19 +194,7 @@ static void setupOverlayWindow(void) {
     });
 }
 
-// ==========================================
--- HOOK CAMERA
-// ==========================================
-void *(*old_PlayerCamera_LateUpdate)(void *self);
-void *hook_PlayerCamera_LateUpdate(void *self) {
-    void *result = old_PlayerCodeCamera_LateUpdate ? old_PlayerCamera_LateUpdate(self) : NULL;
-    if (!g_aimHeadEnabled && !g_aimBodyEnabled) {
-        return result;
-    }
-    return result;
-}
-
-// Constructor tiêm code chuẩn Logos (Yêu cầu file code phải có đuôi .xm và Makefile khai báo Tweak_FILES = Tweak.xm)
+// Constructor tiêm code chuẩn Logos
 %ctor {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         setupOverlayWindow();
