@@ -59,12 +59,12 @@ __unused static bool safe_write_float(void *address, float value) {
 
 @implementation ModMenuViewController
 
--️ (void)viewDidLoad {
+- (void)viewDidLoad {
     [super viewDidLoad];
     self.view.backgroundColor = [UIColor clearColor];
-    self.view.userInteractionEnabled = NO; // QUAN TRỌNG: Root view không chặn cảm ứng
+    self.view.userInteractionEnabled = NO; // Root view không chặn cảm ứng để chơi game mượt
     
-    // 1. Khung Menu chính (Bật userInteractionEnabled = YES riêng cho khung này để bấm chọn hack)
+    // 1. Khung Menu chính (Bật userInteractionEnabled = YES riêng để bấm chọn hack)
     self.menuContainer = [[UIView alloc] initWithFrame:CGRectMake(20, 80, 240, 320)];
     self.menuContainer.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.85];
     self.menuContainer.layer.cornerRadius = 12.0f;
@@ -108,7 +108,7 @@ __unused static bool safe_write_float(void *address, float value) {
     [fovSlider addTarget:self action:@selector(sliderChanged:) forControlEvents:UIControlEventValueChanged];
     [self.menuContainer addSubview:fovSlider];
     
-    // 2. Nút ẩn/hiện Menu nhanh (HACK) - Bật userInteractionEnabled = YES riêng cho nút này
+    // 2. Nút ẩn/hiện Menu nhanh (HACK)
     self.collapseBtn = [UIButton buttonWithType:UIButtonTypeCustom];
     self.collapseBtn.frame = CGRectMake(20, 40, 45, 45);
     self.collapseBtn.backgroundColor = [UIColor redColor];
@@ -197,15 +197,10 @@ static void setupOverlayWindow(void) {
         overlayWindow = [[UIWindow alloc] initWithFrame:screenBounds];
         overlayWindow.windowLevel = UIWindowLevelAlert + 100;
         overlayWindow.backgroundColor = [UIColor clearColor];
-        
-        // CHÚ Ý QUAN TRỌNG: Để Window KHÔNG BAO GIỜ nuốt sự kiện cảm ứng của game, 
-        // ta để mặc định hoặc override tính năng truyền sự kiện, giúp chạm xuyên thấu toàn cục.
-        overlayWindow.userInteractionEnabled = NO; 
+        overlayWindow.userInteractionEnabled = NO; // Cho phép chạm xuyên thấu màn hình game
         
         ModMenuViewController *menuVC = [[ModMenuViewController alloc] init];
         overlayWindow.rootViewController = menuVC;
-        
-        // Bật lại tương tác cho riêng root view controller để các subview nhận touch
         menuVC.view.userInteractionEnabled = YES;
         
         espDrawView = [[UIView alloc] initWithFrame:screenBounds];
@@ -227,12 +222,12 @@ static void setupOverlayWindow(void) {
         [espDrawView.layer addSublayer:fovCircleLayer];
         
         overlayWindow.hidden = NO;
-        NSLog(@"[DudeHack] Đã tối ưu hóa cảm ứng xuyên thấu game thành công!");
+        NSLog(@"[DudeHack] Đã khởi tạo thành công!");
     });
 }
 
 // ==========================================
-// HOOK LATEUPDATE VÀ TÍCH HỢP OFFSETS THỰC CHIẾN
+// HOOK LATEUPDATE & TÍCH HỢP OFFSETS THỰC CHIẾN
 // ==========================================
 void *(*old_PlayerCamera_LateUpdate)(void *self);
 void *hook_PlayerCamera_LateUpdate(void *self) {
@@ -247,18 +242,18 @@ void *hook_PlayerCamera_LateUpdate(void *self) {
     }
     
     dispatch_async(dispatch_get_main_queue(), ^{
-        // 1. Gọi PhotonNetwork::get_PlayerListOthers() lấy danh sách địch
+        // 1. PhotonNetwork::get_PlayerListOthers()
         void *(*get_PlayerListOthers)(void) = (void *(*)(void))0x0; 
         if (!get_PlayerListOthers) return;
         
         void *playerListArray = get_PlayerListOthers();
         if (!playerListArray) return;
         
-        // 2. Đọc chiều dài mảng tại Offset +0x18
+        // 2. Chiều dài mảng tại Offset +0x18
         int length = 0;
         if (!safe_read((void *)((uintptr_t)playerListArray + 0x18), &length, sizeof(int)) || length <= 0) return;
         
-        // 3. Đọc con trỏ mảng items tại Offset +0x20
+        // 3. Con trỏ items tại Offset +0x20
         void *itemsPtr = NULL;
         if (!safe_read((void *)((uintptr_t)playerListArray + 0x20), &itemsPtr, sizeof(void *)) || !itemsPtr) return;
         
@@ -266,17 +261,17 @@ void *hook_PlayerCamera_LateUpdate(void *self) {
             void *playerObj = NULL;
             if (!safe_read((void *)((uintptr_t)itemsPtr + 0x20 + (i * sizeof(void *))), &playerObj, sizeof(void *)) || !playerObj) continue;
             
-            // 4. Kiểm tra Máu (Health) tại Offset 0x28 (Kiểu Float)
+            // 4. Máu (Health) tại Offset 0x28 (Float)
             float health = 0.0f;
             if (!safe_read((void *)((uintptr_t)playerObj + 0x28), &health, sizeof(float)) || health <= 0.0f) {
-                continue; // Bỏ qua xác chết
+                continue; 
             }
             
-            // 5. Lấy Transform tại Offset 0x50 của class Player
+            // 5. Transform tại Offset 0x50 của Player
             void *transformObj = NULL;
             if (!safe_read((void *)((uintptr_t)playerObj + 0x50), &transformObj, sizeof(void *)) || !transformObj) continue;
             
-            // 6. Lấy Tọa độ Vector3 thực tế tại Offset 0x38 của Transform (m_NetworkPosition)
+            // 6. Vector3 position tại Offset 0x38 của Transform (m_NetworkPosition)
             Vector3 enemyPos;
             if (!safe_read((void *)((uintptr_t)transformObj + 0x38), &enemyPos, sizeof(Vector3))) continue;
             
@@ -286,7 +281,7 @@ void *hook_PlayerCamera_LateUpdate(void *self) {
                 enemyPos.y += 1.0f; // Aim Thân
             }
             
-            // 7. Ghi đè góc quay Aimbot qua Yaw (0x44) và Pitch (0x40)
+            // 7. Ghi đè Aimbot qua Yaw (0x44) và Pitch (0x40)
             if ((g_aimHeadEnabled || g_aimBodyEnabled) && g_playerCameraInstance) {
                 // float *yawPtr = (float *)((uintptr_t)g_playerCameraInstance + 0x44);
                 // float *pitchPtr = (float *)((uintptr_t)g_playerCameraInstance + 0x40);
