@@ -5,8 +5,6 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = DudeHack
 DudeHack_FILES = Tweak.xm
-DudeHack_CFLAGS = -fobjc-arc -std=c++17
 DudeHack_FRAMEWORKS = Foundation UIKit
-DudeHack_LIBRARIES = substrate
 
 include $(THEOS_MAKE_PATH)/tweak.mk
