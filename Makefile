@@ -5,6 +5,6 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = DudeHack
 DudeHack_FILES = Tweak.xm
-DudeHack_FRAMEWORKS = Foundation UIKit QuartzCore
+DudeHack_FRAMEWORKS = Foundation UIKit
 
 include $(THEOS_MAKE_PATH)/tweak.mk
