@@ -7,29 +7,27 @@
 #include <cmath>
 #include <string.h>
 #include <vector>
-#include <mutex>
+#include <os/lock.h>
 
-// ================= OFFSET CHUẨN XÁC TỪ FILE DUMP =================
-#define OFF_PLAYER_AVATAR  0x40  // Từ MPGameManager
-#define OFF_OTHERPLAYERS   0x70  // Từ MPGameManager
-#define OFF_AVATAR_TRANS   0x90  // Từ PlayerController
-#define OFF_CAMERA_TRANS   0x20  // Từ CameraControl
-#define OFF_YAW            0x68  // Từ CameraControl
-#define OFF_PITCH          0x64  // Từ CameraControl
-#define OFF_POSITION       0x38  // Offset mặc định của Unity Transform
+// ================= CẤU HÌNH =================
+#define OFF_PLAYER_AVATAR  0x40
+#define OFF_OTHERPLAYERS   0x70
+#define OFF_AVATAR_TRANS   0x90
+#define OFF_YAW            0x68
+#define OFF_PITCH          0x64
+#define OFF_POSITION       0x38
 
-// Cấu hình Hack
 bool isEspBox = true;
 bool isEspLine = true;
-bool isAimEnabled = true; // Bật Aim mặc định
+bool isAimEnabled = true; 
 float fovRadius = 150.0f;
 float aimSmooth = 0.35f;
 
 struct Vector3 { float x, y, z; };
 std::vector<Vector3> enemyPositions;
-std::mutex enemyMutex; // Khóa chống crash đa luồng
+os_unfair_lock lock = OS_UNFAIR_LOCK_INIT;
 
-// Biến IL2CPP
+// Con trỏ hàm
 void* (*il2cpp_domain_get)();
 void** (*il2cpp_domain_get_assemblies)(void*, size_t*);
 void* (*il2cpp_assembly_get_image)(void*);
@@ -40,11 +38,13 @@ void* (*il2cpp_class_get_methods)(void*, void**);
 const char* (*il2cpp_method_get_name)(void*);
 void* (*il2cpp_method_get_pointer)(void*);
 
-// Con trỏ hàm game
-Vector3 (*WorldToScreenPoint)(void* cam, Vector3 pos) = NULL;
+// Chú ý: WorldToScreenPoint trả về struct qua con trỏ (Vector3* ret)
+void (*WorldToScreenPoint)(void* cam, Vector3 pos, Vector3* ret) = NULL;
 void* (*get_mainCamera)() = NULL;
+
 uint64_t MPGameManager_Instance = 0;
 
+// Hàm đọc/ghi an toàn (Bọc thép chống crash)
 template <typename T> bool safe_read(uint64_t addr, T& out) {
     if (!addr) return false;
     vm_size_t size = 0;
@@ -55,7 +55,7 @@ template <typename T> bool safe_write(uint64_t addr, const T& in) {
     return vm_write(mach_task_self(), addr, (vm_address_t)&in, sizeof(T)) == KERN_SUCCESS;
 }
 
-// ================= GIAO DIỆN VẼ ESP & FOV =================
+// ================= GIAO DIỆN =================
 @interface ESPOverlay : UIView
 @end
 @implementation ESPOverlay
@@ -63,7 +63,6 @@ template <typename T> bool safe_write(uint64_t addr, const T& in) {
     CGContextRef ctx = UIGraphicsGetCurrentContext();
     CGContextClearRect(ctx, self.bounds);
     
-    // Vẽ FOV
     CGContextSetStrokeColorWithColor(ctx, [UIColor redColor].CGColor);
     CGContextSetLineWidth(ctx, 1.0);
     CGContextStrokeEllipseInRect(ctx, CGRectMake(self.bounds.size.width/2 - fovRadius, self.bounds.size.height/2 - fovRadius, fovRadius*2, fovRadius*2));
@@ -72,9 +71,11 @@ template <typename T> bool safe_write(uint64_t addr, const T& in) {
     void* cam = get_mainCamera();
     if (!cam) return;
 
-    enemyMutex.lock(); // Khóa trước khi vẽ
+    os_unfair_lock_lock(&lock);
     for (auto& pos : enemyPositions) {
-        Vector3 screen = WorldToScreenPoint(cam, pos);
+        Vector3 screen = {0,0,0};
+        WorldToScreenPoint(cam, pos, &screen);
+        
         if (screen.x > 0 && screen.x < self.bounds.size.width && screen.y > 0 && screen.y < self.bounds.size.height) {
             CGContextSetStrokeColorWithColor(ctx, [UIColor redColor].CGColor);
             CGContextSetLineWidth(ctx, 1.5);
@@ -88,44 +89,37 @@ template <typename T> bool safe_write(uint64_t addr, const T& in) {
             }
         }
     }
-    enemyMutex.unlock(); // Mở khóa sau khi vẽ
+    os_unfair_lock_unlock(&lock);
 }
 @end
 ESPOverlay *espView = nil;
 
-// ================= HOOK =================
-typedef void (*MPGameManager_Awake_t)(void* self);
-MPGameManager_Awake_t orig_MPGameManager_Awake = NULL;
-void hook_MPGameManager_Awake(void* self) {
-    orig_MPGameManager_Awake(self);
-    MPGameManager_Instance = (uint64_t)self;
-}
-
+// ================= LOGIC CỐT LÕI =================
 typedef void (*CameraUpdate_t)(void* self);
 CameraUpdate_t orig_CameraUpdate = NULL;
 
 void hook_CameraUpdate(void* self) {
     orig_CameraUpdate(self);
-    enemyMutex.lock();
-    enemyPositions.clear();
-    enemyMutex.unlock();
     
+    // Nếu chưa tìm thấy MPGameManager thì bỏ qua (tránh crash)
     if (MPGameManager_Instance == 0) return;
 
-    // 1. Lấy vị trí CAMERA hiện tại (Để Aim chuẩn nhất)
     Vector3 camPos = {0,0,0};
     uint64_t camTrans = 0;
     if (safe_read((uint64_t)self + OFF_CAMERA_TRANS, camTrans) && camTrans) {
         safe_read(camTrans + OFF_POSITION, camPos);
     }
 
-    // 2. Lấy danh sách địch
+    os_unfair_lock_lock(&lock);
+    enemyPositions.clear();
+    os_unfair_lock_unlock(&lock);
+
     uint64_t listPtr = 0;
     if (safe_read(MPGameManager_Instance + OFF_OTHERPLAYERS, listPtr) && listPtr) {
         uint64_t arrayPtr = 0;
         int32_t length = 0;
         
-        if (safe_read(listPtr + 0x10, arrayPtr) && safe_read(listPtr + 0x18, length)) {
+        if (safe_read(listPtr + 0x10, arrayPtr) && safe_read(listPtr + 0x18, length) && length > 0 && length < 64) {
             float closestAngle = fovRadius;
             Vector3 bestTarget = {0,0,0};
             bool foundTarget = false;
@@ -135,12 +129,12 @@ void hook_CameraUpdate(void* self) {
                 if (safe_read(arrayPtr + 0x20 + (i * 8), trans) && trans) {
                     Vector3 pos = {0,0,0};
                     if (safe_read(trans + OFF_POSITION, pos)) {
-                        // Cộng 1.5f để ngắm vào Đầu/Cổ
+                        // Tọa độ đầu để vẽ Box
                         Vector3 headPos = { pos.x, pos.y + 1.5f, pos.z }; 
                         
-                        enemyMutex.lock();
+                        os_unfair_lock_lock(&lock);
                         enemyPositions.push_back(headPos);
-                        enemyMutex.unlock();
+                        os_unfair_lock_unlock(&lock);
                         
                         // Logic Aimbot
                         if (isAimEnabled) {
@@ -155,7 +149,11 @@ void hook_CameraUpdate(void* self) {
                             safe_read((uint64_t)self + OFF_YAW, curYaw);
                             safe_read((uint64_t)self + OFF_PITCH, curPitch);
                             
-                            float yawDiff = fabsf(curYaw - targetYaw);
+                            // Tính góc lệch ngắn nhất (tránh xoay 360 độ)
+                            float yawDiff = targetYaw - curYaw;
+                            while (yawDiff > 180) yawDiff -= 360;
+                            while (yawDiff < -180) yawDiff += 360;
+                            
                             float pitchDiff = fabsf(curPitch - targetPitch);
                             float totalDiff = sqrtf(yawDiff*yawDiff + pitchDiff*pitchDiff);
                             
@@ -182,20 +180,33 @@ void hook_CameraUpdate(void* self) {
                 safe_read((uint64_t)self + OFF_YAW, curYaw);
                 safe_read((uint64_t)self + OFF_PITCH, curPitch);
                 
-                float newYaw = curYaw + (targetYaw - curYaw) * aimSmooth;
-                float newPitch = curPitch + (targetPitch - curPitch) * aimSmooth;
+                float yawDiff = targetYaw - curYaw;
+                while (yawDiff > 180) yawDiff -= 360;
+                while (yawDiff < -180) yawDiff += 360;
+                
+                float newYaw = curYaw + (yawDiff * aimSmooth);
+                float newPitch = curPitch + ((targetPitch - curPitch) * aimSmooth);
                 
                 safe_write((uint64_t)self + OFF_YAW, newYaw);
                 safe_write((uint64_t)self + OFF_PITCH, newPitch);
             }
         }
     }
-
+    
     dispatch_async(dispatch_get_main_queue(), ^{
         if (espView) [espView setNeedsDisplay];
     });
 }
 
+// ================= HOOK LẤY INSTANCE =================
+typedef void (*MPGameManager_Update_t)(void* self);
+MPGameManager_Update_t orig_MPGameManager_Update = NULL;
+void hook_MPGameManager_Update(void* self) {
+    orig_MPGameManager_Update(self);
+    MPGameManager_Instance = (uint64_t)self; // Lấy instance liên tục, đảm bảo an toàn
+}
+
+// ================= KHỞI TẠO =================
 __attribute__((constructor))
 static void init() {
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -232,10 +243,10 @@ static void init() {
                     void* iter = NULL; void* method;
                     while ((method = il2cpp_class_get_methods(cls, &iter))) {
                         const char* mName = il2cpp_method_get_name(method);
-                        if (mName && (strstr(mName, "Awake") || strstr(mName, "Start"))) {
+                        if (mName && strcmp(mName, "Update") == 0) {
                             void* ptr = il2cpp_method_get_pointer(method);
-                            if (ptr && !orig_MPGameManager_Awake) {
-                                MSHookFunction(ptr, (void*)hook_MPGameManager_Awake, (void**)&orig_MPGameManager_Awake);
+                            if (ptr && !orig_MPGameManager_Update) {
+                                MSHookFunction(ptr, (void*)hook_MPGameManager_Update, (void**)&orig_MPGameManager_Update);
                             }
                         }
                     }
@@ -245,14 +256,13 @@ static void init() {
                     while ((method = il2cpp_class_get_methods(cls, &iter))) {
                         const char* mName = il2cpp_method_get_name(method);
                         if (mName && strstr(mName, "WorldToScreenPoint")) {
-                            WorldToScreenPoint = (Vector3(*)(void*, Vector3))il2cpp_method_get_pointer(method);
+                            WorldToScreenPoint = (void(*)(void*, Vector3, Vector3*))il2cpp_method_get_pointer(method);
                         }
                         if (mName && strstr(mName, "get_main")) {
                             get_mainCamera = (void*(*)())il2cpp_method_get_pointer(method);
                         }
                     }
                 }
-                // Hook CameraControl để can thiệp góc xoay
                 if (strcmp(clsName, "CameraControl") == 0) {
                     void* iter = NULL; void* method;
                     while ((method = il2cpp_class_get_methods(cls, &iter))) {
