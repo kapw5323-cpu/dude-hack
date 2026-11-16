@@ -9,15 +9,18 @@
 typedef struct { float x, y, z; } Vector3;
 typedef struct { float x, y; } Vector2;
 
-// Trạng thái các tính năng Mod Menu
+// Trạng thái các tính năng Mod Menu & ESP
 static BOOL g_aimHeadEnabled = NO;
 static BOOL g_aimBodyEnabled = NO;
 static BOOL g_espBoxEnabled = NO;
 static BOOL g_espLineEnabled = NO;
-__unused static float g_fovRadius = 150.0f;
+static BOOL g_espSkeletonEnabled = NO;
+static float g_fovRadius = 150.0f;
 
 // Biến quản lý UI & Camera Instance toàn cục
 static UIWindow *overlayWindow = nil;
+static UIView *espDrawView = nil;
+static CAShapeLayer *fovCircleLayer = nil;
 static void *g_playerCameraInstance = NULL;
 
 // Hàm đọc bộ nhớ an toàn (Chống crash 100%)
@@ -44,33 +47,33 @@ __unused static bool safe_write_float(void *address, float value) {
 }
 
 // ==========================================
-// VIEW QUẢN LÝ CẢM ỨNG THÔNG MINH (HIT-TEST)
+// CỬA SỔ CẢM ỨNG XUYÊN THẤU TUYỆT ĐỐI (TOUCH-THROUGH WINDOW)
 // ==========================================
-@interface TouchManagerView : UIView
+@interface TouchThroughWindow : UIWindow
 @property (nonatomic, strong) UIView *menuContainer;
 @property (nonatomic, strong) UIButton *collapseBtn;
 @end
 
-@implementation TouchManagerView
-- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
-    // 1. Nếu nút HACK tròn đang hiện và bấm vào nó -> Nhận cảm ứng hack
+@implementation TouchThroughWindow
+- (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event {
+    // 1. Nếu nút HACK tròn đang hiện và chạm vào nó -> Nhận cảm ứng hack
     if (self.collapseBtn && !self.collapseBtn.hidden) {
         CGPoint p = [self convertPoint:point toView:self.collapseBtn];
         if ([self.collapseBtn pointInside:p withEvent:event]) {
-            return [self.collapseBtn hitTest:p withEvent:event];
+            return YES;
         }
     }
     
-    // 2. Nếu Menu To đang mở và bấm vào trong khung Menu -> Nhận cảm ứng hack
+    // 2. Nếu Menu To đang mở và chạm vào trong khung Menu -> Nhận cảm ứng hack
     if (self.menuContainer && !self.menuContainer.hidden) {
         CGPoint p = [self convertPoint:point toView:self.menuContainer];
         if ([self.menuContainer pointInside:p withEvent:event]) {
-            return [self.menuContainer hitTest:p withEvent:event];
+            return YES;
         }
     }
     
-    // 3. Ngoài vùng menu: Trả về nil để ngón tay chạm XUYÊN THẲNG xuống game 100%!
-    return nil;
+    // 3. Ngoài vùng menu: Trả về NO để ngón tay chạm XUYÊN THẲNG xuống màn hình game 100%!
+    return NO;
 }
 @end
 
@@ -78,28 +81,24 @@ __unused static bool safe_write_float(void *address, float value) {
 // GIAO DIỆN MOD MENU NỔI (KÉO THẢ & THU GỌN)
 // ==========================================
 @interface ModMenuViewController : UIViewController
-@property (nonatomic, strong) TouchManagerView *managerView;
 @property (nonatomic, strong) UIView *menuContainer;
 @property (nonatomic, strong) UIButton *collapseBtn;
 @property (nonatomic, strong) UISwitch *switchAimHead;
 @property (nonatomic, strong) UISwitch *switchAimBody;
 @property (nonatomic, strong) UISwitch *switchEspBox;
 @property (nonatomic, strong) UISwitch *switchEspLine;
+@property (nonatomic, strong) UISwitch *switchEspSkeleton;
+@property (nonatomic, strong) UISlider *fovSlider;
 @end
 
 @implementation ModMenuViewController
 
-- (void)loadView {
-    self.managerView = [[TouchManagerView alloc] initWithFrame:[UIScreen mainScreen].bounds];
-    self.managerView.backgroundColor = [UIColor clearColor];
-    self.view = self.managerView;
-}
-
 - (void)viewDidLoad {
     [super viewDidLoad];
+    self.view.backgroundColor = [UIColor clearColor];
     
     // 1. Khung Menu To chính (Kéo thả tự do)
-    self.menuContainer = [[UIView alloc] initWithFrame:CGRectMake(40, 80, 240, 260)];
+    self.menuContainer = [[UIView alloc] initWithFrame:CGRectMake(40, 60, 240, 360)];
     self.menuContainer.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.9f];
     self.menuContainer.layer.cornerRadius = 12.0f;
     self.menuContainer.layer.borderWidth = 1.5f;
@@ -108,15 +107,13 @@ __unused static bool safe_write_float(void *address, float value) {
     self.menuContainer.hidden = NO;
     [self.view addSubview:self.menuContainer];
     
-    self.managerView.menuContainer = self.menuContainer;
-    
     // Thêm cử chỉ kéo thả cho Menu To
     UIPanGestureRecognizer *panMenu = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handleMenuPan:)];
     [self.menuContainer addGestureRecognizer:panMenu];
     
     // Tiêu đề
     UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 10, 150, 30)];
-    titleLabel.text = @"DudeHack Pro";
+    titleLabel.text = @"🔥 DudeHack Pro 🔥";
     titleLabel.textColor = [UIColor whiteColor];
     titleLabel.font = [UIFont boldSystemFontOfSize:14];
     [self.menuContainer addSubview:titleLabel];
@@ -143,6 +140,24 @@ __unused static bool safe_write_float(void *address, float value) {
     UIView *row4 = [self createRowWithFrame:CGRectMake(10, 170, 220, 30) title:@"ESP Đường (Line)" action:@selector(toggleEspLine:) assignSwitch:&_switchEspLine];
     [self.menuContainer addSubview:row4];
     
+    UIView *row5 = [self createRowWithFrame:CGRectMake(10, 210, 220, 30) title:@"Khung Xương (Bone)" action:@selector(toggleEspSkeleton:) assignSwitch:&_switchEspSkeleton];
+    [self.menuContainer addSubview:row5];
+    
+    // Slider điều chỉnh Vòng FOV
+    UILabel *fovLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 250, 220, 20)];
+    fovLabel.text = [NSString stringWithFormat:@"Đường kính FOV: %.0f", g_fovRadius];
+    fovLabel.tag = 999; // Dùng tag để cập nhật text khi trượt
+    fovLabel.textColor = [UIColor lightGrayColor];
+    fovLabel.font = [UIFont systemFontOfSize:12];
+    [self.menuContainer addSubview:fovLabel];
+    
+    self.fovSlider = [[UISlider alloc] initWithFrame:CGRectMake(10, 275, 220, 20)];
+    self.fovSlider.minimumValue = 50.0f;
+    self.fovSlider.maximumValue = 300.0f;
+    self.fovSlider.value = g_fovRadius;
+    [self.fovSlider addTarget:self action:@selector(sliderChanged:) forControlEvents:UIControlEventValueChanged];
+    [self.menuContainer addSubview:self.fovSlider];
+    
     // 2. Menu Bé (Nút HACK tròn nổi, kéo thả được và bấm để mở lại Menu To)
     self.collapseBtn = [UIButton buttonWithType:UIButtonTypeCustom];
     self.collapseBtn.frame = CGRectMake(40, 40, 45, 45);
@@ -156,11 +171,16 @@ __unused static bool safe_write_float(void *address, float value) {
     [self.collapseBtn addTarget:self action:@selector(restoreMenu:) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:self.collapseBtn];
     
-    self.managerView.collapseBtn = self.collapseBtn;
-    
     // Thêm cử chỉ kéo thả cho Menu Bé
     UIPanGestureRecognizer *panCollapse = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handleCollapsePan:)];
     [self.collapseBtn addGestureRecognizer:panCollapse];
+    
+    // Truyền references vào TouchThroughWindow
+    if ([overlayWindow isKindOfClass:[TouchThroughWindow class]]) {
+        TouchThroughWindow *win = (TouchThroughWindow *)overlayWindow;
+        win.menuContainer = self.menuContainer;
+        win.collapseBtn = self.collapseBtn;
+    }
 }
 
 - (void)handleMenuPan:(UIPanGestureRecognizer * __nonnull)gesture {
@@ -231,23 +251,70 @@ __unused static bool safe_write_float(void *address, float value) {
     g_espLineEnabled = sender.isOn;
 }
 
+- (void)toggleEspSkeleton:(UISwitch * __nonnull)sender {
+    g_espSkeletonEnabled = sender.isOn;
+}
+
+- (void)sliderChanged:(UISlider * __nonnull)sender {
+    g_fovRadius = sender.value;
+    
+    // Cập nhật text nhãn FOV
+    UILabel *fovLbl = [self.menuContainer viewWithTag:999];
+    if (fovLbl) {
+        fovLbl.text = [NSString stringWithFormat:@"Đường kính FOV: %.0f", g_fovRadius];
+    }
+    
+    // Cập nhật trực tiếp bán kính vòng FOV trên màn hình
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (fovCircleLayer && overlayWindow) {
+            CGRect screenBounds = overlayWindow.bounds;
+            UIBezierPath *path = [UIBezierPath bezierPathWithArcCenter:CGPointMake(screenBounds.size.width/2, screenBounds.size.height/2)
+                                                              radius:g_fovRadius
+                                                          startAngle:0
+                                                            endAngle:2 * M_PI
+                                                           clockwise:YES];
+            fovCircleLayer.path = path.CGPath;
+        }
+    });
+}
+
 @end
 
 // ==========================================
-// KHỞI TẠO CỬA SỔ NỔI AN TOÀN
+// KHỞI TẠO CỬA SỔ NỔI & VÒNG FOV
 // ==========================================
 static void setupOverlayWindow(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         if (overlayWindow) return;
         
         CGRect screenBounds = [UIScreen mainScreen].bounds;
-        overlayWindow = [[UIWindow alloc] initWithFrame:screenBounds];
+        overlayWindow = [[TouchThroughWindow alloc] initWithFrame:screenBounds];
         overlayWindow.windowLevel = UIWindowLevelAlert + 100;
         overlayWindow.backgroundColor = [UIColor clearColor];
         overlayWindow.userInteractionEnabled = YES;
         
         ModMenuViewController *menuVC = [[ModMenuViewController alloc] init];
         overlayWindow.rootViewController = menuVC;
+        
+        // Lớp vẽ ESP & Vòng FOV xuyên thấu
+        espDrawView = [[UIView alloc] initWithFrame:screenBounds];
+        espDrawView.backgroundColor = [UIColor clearColor];
+        espDrawView.userInteractionEnabled = NO;
+        [menuVC.view addSubview:espDrawView];
+        [menuVC.view sendSubviewToBack:espDrawView];
+        
+        // Khởi tạo vòng FOV hình tròn
+        fovCircleLayer = [CAShapeLayer layer];
+        UIBezierPath *path = [UIBezierPath bezierPathWithArcCenter:CGPointMake(screenBounds.size.width/2, screenBounds.size.height/2)
+                                                          radius:g_fovRadius
+                                                      startAngle:0
+                                                        endAngle:2 * M_PI
+                                                       clockwise:YES];
+        fovCircleLayer.path = path.CGPath;
+        fovCircleLayer.fillColor = [UIColor clearColor].CGColor;
+        fovCircleLayer.strokeColor = [UIColor redColor].CGColor;
+        fovCircleLayer.lineWidth = 1.2f;
+        [espDrawView.layer addSublayer:fovCircleLayer];
         
         overlayWindow.hidden = NO;
     });
@@ -264,7 +331,7 @@ void *hook_PlayerCamera_LateUpdate(void *self) {
     
     void *result = old_PlayerCamera_LateUpdate ? old_PlayerCamera_LateUpdate(self) : NULL;
     
-    if (!g_aimHeadEnabled && !g_aimBodyEnabled && !g_espBoxEnabled && !g_espLineEnabled) {
+    if (!g_aimHeadEnabled && !g_aimBodyEnabled && !g_espBoxEnabled && !g_espLineEnabled && !g_espSkeletonEnabled) {
         return result;
     }
     
