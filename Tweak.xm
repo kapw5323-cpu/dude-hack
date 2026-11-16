@@ -7,27 +7,29 @@
 #include <cmath>
 #include <string.h>
 #include <vector>
+#include <os/lock.h>
 
 // --- OFFSET CHUẨN ---
-#define OFF_PLAYER_AVATAR  0x40
 #define OFF_OTHERPLAYERS   0x70
 #define OFF_CAMERA_TRANS   0x20
 #define OFF_YAW            0x68
 #define OFF_PITCH          0x64
 #define OFF_POSITION       0x38
 
-// --- CẤU HÌNH ---
 bool isAimEnabled = true; 
 float aimSmooth = 0.35f;
 
 struct Vector3 { float x, y, z; };
+std::vector<Vector3> enemyPositions;
+os_unfair_lock lock = OS_UNFAIR_LOCK_INIT;
 
 // Hàm game
 void (*WorldToScreenPoint)(void* cam, Vector3 pos, Vector3* ret) = NULL;
 void* (*get_mainCamera)() = NULL;
-uint64_t MPGameManager_Instance = 0;
 
-// Hàm đọc an toàn
+uint64_t MPGameManager_Instance = 0;
+uint64_t CameraControl_Instance = 0;
+
 template <typename T> bool safe_read(uint64_t addr, T& out) {
     if (!addr) return false;
     vm_size_t size = 0;
@@ -38,21 +40,58 @@ template <typename T> bool safe_write(uint64_t addr, const T& in) {
     return vm_write(mach_task_self(), addr, (vm_address_t)&in, sizeof(T)) == KERN_SUCCESS;
 }
 
-// ================= TIMER QUÉT BỘ NHỚ & AIM =================
-void HackLoop() {
-    if (MPGameManager_Instance == 0 || !get_mainCamera) return;
-    
+// Hàm kiểm tra tọa độ hợp lệ (Chống crash do dữ liệu rác)
+bool isValidPos(Vector3 pos) {
+    if (isnan(pos.x) || isnan(pos.y) || isnan(pos.z)) return false;
+    if (isinf(pos.x) || isinf(pos.y) || isinf(pos.z)) return false;
+    if (pos.x == 0 && pos.y == 0 && pos.z == 0) return false; // Tọa độ gốc (thường là rác)
+    return true;
+}
+
+// ================= GIAO DIỆN VẼ =================
+@interface ESPOverlay : UIView
+@end
+@implementation ESPOverlay
+- (void)drawRect:(CGRect)rect {
+    CGContextRef ctx = UIGraphicsGetCurrentContext();
+    CGContextClearRect(ctx, self.bounds);
+    if (!get_mainCamera || !WorldToScreenPoint) return;
     void* cam = get_mainCamera();
     if (!cam) return;
 
-    // 1. Lấy vị trí Camera (LocalPlayer)
+    os_unfair_lock_lock(&lock);
+    for (auto& pos : enemyPositions) {
+        Vector3 screen = {0,0,0};
+        WorldToScreenPoint(cam, pos, &screen);
+        if (screen.x > 0 && screen.x < self.bounds.size.width && screen.y > 0 && screen.y < self.bounds.size.height) {
+            CGContextSetStrokeColorWithColor(ctx, [UIColor redColor].CGColor);
+            CGContextSetLineWidth(ctx, 1.5);
+            CGContextStrokeRect(ctx, CGRectMake(screen.x - 30, screen.y - 60, 60, 120));
+        }
+    }
+    os_unfair_lock_unlock(&lock);
+}
+@end
+ESPOverlay *espView = nil;
+
+// ================= LOGIC CHÍNH =================
+dispatch_source_t timer = NULL;
+
+void HackLoop() {
+    if (MPGameManager_Instance == 0 || CameraControl_Instance == 0) return;
+
+    // 1. Lấy vị trí Camera an toàn
     Vector3 camPos = {0,0,0};
     uint64_t camTrans = 0;
-    if (safe_read((uint64_t)cam + OFF_CAMERA_TRANS, camTrans) && camTrans) {
+    if (safe_read(CameraControl_Instance + OFF_CAMERA_TRANS, camTrans) && camTrans) {
         safe_read(camTrans + OFF_POSITION, camPos);
     }
 
-    // 2. Lấy danh sách địch
+    float curYaw = 0, curPitch = 0;
+    safe_read(CameraControl_Instance + OFF_YAW, curYaw);
+    safe_read(CameraControl_Instance + OFF_PITCH, curPitch);
+
+    // 2. Đọc List an toàn (Snapshot)
     uint64_t listPtr = 0;
     if (!safe_read(MPGameManager_Instance + OFF_OTHERPLAYERS, listPtr) || !listPtr) return;
 
@@ -61,6 +100,10 @@ void HackLoop() {
     if (!safe_read(listPtr + 0x10, arrayPtr) || !safe_read(listPtr + 0x18, length)) return;
     if (length <= 0 || length > 64) return; // Chặn mảng lỗi
 
+    os_unfair_lock_lock(&lock);
+    enemyPositions.clear();
+    os_unfair_lock_unlock(&lock);
+
     float closestAngle = 150.0f;
     Vector3 bestTarget = {0,0,0};
     bool foundTarget = false;
@@ -68,13 +111,19 @@ void HackLoop() {
     for (int i = 0; i < length; i++) {
         uint64_t trans = 0;
         if (!safe_read(arrayPtr + 0x20 + (i * 8), trans) || !trans) continue;
-
+        
+        // Đọc tọa độ với kiểm tra an toàn
         Vector3 pos = {0,0,0};
         if (!safe_read(trans + OFF_POSITION, pos)) continue;
+        
+        // NẾU TỌA ĐỘ LÀ RÁC -> BỎ QUA (Đây là chốt chặn sinh tử)
+        if (!isValidPos(pos)) continue; 
 
         Vector3 headPos = { pos.x, pos.y + 1.5f, pos.z };
+        os_unfair_lock_lock(&lock);
+        enemyPositions.push_back(headPos);
+        os_unfair_lock_unlock(&lock);
 
-        // Logic Aimbot
         if (isAimEnabled) {
             float dx = headPos.x - camPos.x;
             float dy = headPos.y - camPos.y;
@@ -82,10 +131,6 @@ void HackLoop() {
             
             float targetYaw = atan2f(dx, dz) * 57.2958f;
             float targetPitch = atan2f(dy, sqrtf(dx*dx + dz*dz)) * 57.2958f;
-            
-            float curYaw = 0, curPitch = 0;
-            safe_read((uint64_t)cam + OFF_YAW, curYaw);
-            safe_read((uint64_t)cam + OFF_PITCH, curPitch);
             
             float yawDiff = targetYaw - curYaw;
             while (yawDiff > 180) yawDiff -= 360;
@@ -102,7 +147,7 @@ void HackLoop() {
         }
     }
 
-    // 3. Ghi đè góc xoay Camera (Aim)
+    // 3. Kéo tâm
     if (foundTarget && isAimEnabled) {
         float dx = bestTarget.x - camPos.x;
         float dy = bestTarget.y - camPos.y;
@@ -111,10 +156,6 @@ void HackLoop() {
         float targetYaw = atan2f(dx, dz) * 57.2958f;
         float targetPitch = atan2f(dy, sqrtf(dx*dx + dz*dz)) * 57.2958f;
         
-        float curYaw = 0, curPitch = 0;
-        safe_read((uint64_t)cam + OFF_YAW, curYaw);
-        safe_read((uint64_t)cam + OFF_PITCH, curPitch);
-        
         float yawDiff = targetYaw - curYaw;
         while (yawDiff > 180) yawDiff -= 360;
         while (yawDiff < -180) yawDiff += 360;
@@ -122,30 +163,45 @@ void HackLoop() {
         float newYaw = curYaw + (yawDiff * aimSmooth);
         float newPitch = curPitch + ((targetPitch - curPitch) * aimSmooth);
         
-        safe_write((uint64_t)cam + OFF_YAW, newYaw);
-        safe_write((uint64_t)cam + OFF_PITCH, newPitch);
+        safe_write(CameraControl_Instance + OFF_YAW, newYaw);
+        safe_write(CameraControl_Instance + OFF_PITCH, newPitch);
     }
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (espView) [espView setNeedsDisplay];
+    });
 }
 
-// ================= HOOK LẤY INSTANCE (AN TOÀN) =================
-// Chỉ hook hàm Start/Awake của MPGameManager, không hook Update/LateUpdate
-typedef void (*Start_t)(void* self);
-Start_t orig_Start = NULL;
-void hook_Start(void* self) {
-    orig_Start(self);
+// ================= HOOK =================
+typedef void (*MPGameManager_Update_t)(void* self);
+MPGameManager_Update_t orig_MPGameManager_Update = NULL;
+void hook_MPGameManager_Update(void* self) {
+    orig_MPGameManager_Update(self);
     MPGameManager_Instance = (uint64_t)self;
+}
+
+typedef void (*CameraControl_Update_t)(void* self);
+CameraControl_Update_t orig_CameraControl_Update = NULL;
+void hook_CameraControl_Update(void* self) {
+    orig_CameraControl_Update(self);
+    CameraControl_Instance = (uint64_t)self;
 }
 
 __attribute__((constructor))
 static void init() {
-    // Tạo Timer chạy 60fps trên Main Thread
     dispatch_async(dispatch_get_main_queue(), ^{
-        [NSTimer scheduledTimerWithTimeInterval:1.0/60.0 target:[NSBlockOperation blockOperationWithBlock:^{
-            HackLoop();
-        }] selector:@selector(main) userInfo:nil repeats:YES];
+        espView = [[ESPOverlay alloc] initWithFrame:[UIScreen mainScreen].bounds];
+        espView.backgroundColor = [UIColor clearColor];
+        espView.userInteractionEnabled = NO;
+        [[UIApplication sharedApplication].windows.firstObject addSubview:espView];
+
+        // Dispatch Timer (Cực nhẹ, không rò rỉ bộ nhớ)
+        timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+        dispatch_source_set_timer(timer, DISPATCH_TIME_NOW, NSEC_PER_SEC / 60.0, 0);
+        dispatch_source_set_event_handler(timer, ^{ HackLoop(); });
+        dispatch_resume(timer);
     });
     
-    // Quét hàm IL2CPP để lấy con trỏ
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         void* h = dlopen(NULL, RTLD_LAZY);
         if (!h) return;
@@ -172,31 +228,33 @@ static void init() {
                 const char* cName = fn_c_name(cls);
                 if (!cName) continue;
 
-                // Hook Start của MPGameManager
                 if (strcmp(cName, "MPGameManager") == 0) {
                     void* iter = NULL; void* method;
                     while ((method = fn_m_get(cls, &iter))) {
                         const char* mName = fn_m_name(method);
-                        if (mName && (strcmp(mName, "Start") == 0 || strcmp(mName, "Awake") == 0)) {
+                        if (mName && strcmp(mName, "Update") == 0) {
                             void* ptr = fn_m_ptr(method);
-                            if (ptr && !orig_Start) {
-                                MSHookFunction(ptr, (void*)hook_Start, (void**)&orig_Start);
-                            }
+                            if (ptr && !orig_MPGameManager_Update) MSHookFunction(ptr, (void*)hook_MPGameManager_Update, (void**)&orig_MPGameManager_Update);
                         }
                     }
                 }
-                // Lấy hàm Camera
+                if (strcmp(cName, "CameraControl") == 0) {
+                    void* iter = NULL; void* method;
+                    while ((method = fn_m_get(cls, &iter))) {
+                        const char* mName = fn_m_name(method);
+                        if (mName && strstr(mName, "Update")) {
+                            void* ptr = fn_m_ptr(method);
+                            if (ptr && !orig_CameraControl_Update) MSHookFunction(ptr, (void*)hook_CameraControl_Update, (void**)&orig_CameraControl_Update);
+                        }
+                    }
+                }
                 if (strcmp(cName, "Camera") == 0) {
                     void* iter = NULL; void* method;
                     while ((method = fn_m_get(cls, &iter))) {
                         const char* mName = fn_m_name(method);
                         if (mName) {
-                            if (strstr(mName, "WorldToScreenPoint")) {
-                                WorldToScreenPoint = (void(*)(void*, Vector3, Vector3*))fn_m_ptr(method);
-                            }
-                            if (strstr(mName, "get_main")) {
-                                get_mainCamera = (void*(*)())fn_m_ptr(method);
-                            }
+                            if (strstr(mName, "WorldToScreenPoint")) WorldToScreenPoint = (void(*)(void*, Vector3, Vector3*))fn_m_ptr(method);
+                            if (strstr(mName, "get_main")) get_mainCamera = (void*(*)())fn_m_ptr(method);
                         }
                     }
                 }
