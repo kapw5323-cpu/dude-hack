@@ -4,7 +4,8 @@
 
 // --- BIẾN TRẠNG THÁI ---
 __attribute__((unused)) static BOOL isMenuShown = NO;
-__attribute__((unused)) static BOOL aimTargetHead = YES;
+__attribute__((unused)) static BOOL aimEnabled = YES;
+__attribute__((unused)) static BOOL aimTargetHead = YES; // YES: Đầu (0x98), NO: Thân (0x90)
 __attribute__((unused)) static BOOL espBoxEnabled = NO;
 __attribute__((unused)) static BOOL espSkeletonEnabled = NO;
 __attribute__((unused)) static BOOL espLineEnabled = NO;
@@ -12,25 +13,47 @@ __attribute__((unused)) static float fovRadius = 100.0f;
 
 // UI Components
 static UIWindow *modWindow = nil;
-static UIButton *floatingIconButton = nil; // Icon tròn nhỏ bên ngoài
-static UIView *menuContainerView = nil;     // Bảng menu chính
+static UIButton *floatingIconButton = nil;
+static UIView *menuContainerView = nil;
+static UIView *fovCircleView = nil; // View vẽ vòng tròn FOV đỏ thật sự
 
-// --- LỚP CHẶN CHẠM THÔNG MINH (CHỐNG LIỆT CẢM ỨNG GAME) ---
-@interface PassthroughView : UIView
+// --- LỚP CHẶN CHẠM THÔNG MINH (CHỐNG LIỆT CẢM ỨNG HOÀN TOÀN) ---
+@interface PassthroughWindow : UIWindow
 @end
 
-@implementation PassthroughView
+@implementation PassthroughWindow
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
     UIView *hitView = [super hitTest:point withEvent:event];
-    // Nếu chạm vào vùng trống ngoài menu/icon thì cho xuyên thấu xuống game
-    if (hitView == self) {
+    // Chỉ nhận cảm ứng nếu bấm vào icon hoặc menu, ngoài ra cho xuyên thấu 100% xuống game
+    if (hitView == self || hitView == self.rootViewController.view) {
         return nil;
     }
     return hitView;
 }
 @end
 
-// --- GIAO DIỆN MOD MENU ICON NHỎ ---
+// --- VÙNG VẼ VÒNG TRÒN FOV THẬT ---
+@interface FOVView : UIView
+@end
+
+@implementation FOVView
+- (void)drawRect:(CGRect)rect {
+    [super drawRect:rect];
+    if (!aimEnabled) return;
+    
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    if (!context) return;
+    
+    // Vẽ vòng tròn FOV màu đỏ ở chính giữa màn hình
+    CGPoint center = CGPointMake(rect.size.width / 2.0f, rect.size.height / 2.0f);
+    CGContextSetStrokeColorWithColor(context, [UIColor redColor].CGColor);
+    CGContextSetLineWidth(context, 1.5f);
+    CGContextAddArc(context, center.x, center.y, fovRadius, 0.0f, 2.0f * M_PI, 0);
+    CGContextStrokePath(context);
+}
+@end
+
+// --- GIAO DIỆN MOD MENU ---
 @interface ModMenuManager : NSObject
 + (void)setupOverlay;
 @end
@@ -41,46 +64,46 @@ static UIView *menuContainerView = nil;     // Bảng menu chính
     if (modWindow) return;
     
     dispatch_async(dispatch_get_main_queue(), ^{
-        // Tạo UIWindow với mức level vừa đủ đè game nhưng không nuốt vĩnh viễn sự kiện cảm ứng thô
-        modWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-        modWindow.windowLevel = UIWindowLevelStatusBar + 1;
+        // Dùng PassthroughWindow thay vì UIWindow thường để chống liệt cảm ứng game
+        modWindow = [[PassthroughWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+        modWindow.windowLevel = UIWindowLevelStatusBar + 100;
         modWindow.backgroundColor = [UIColor clearColor];
         modWindow.hidden = NO;
         
-        // Dùng PassthroughView làm root view để cho phép chạm xuyên qua vùng trống
         UIViewController *vc = [[UIViewController alloc] init];
-        vc.view = [[PassthroughView alloc] initWithFrame:[UIScreen mainScreen].bounds];
-        vc.view.backgroundColor = [UIColor clearColor];
         modWindow.rootViewController = vc;
         
-        // 1. Tạo Icon nổi nhỏ gọn (Hình tròn, màu cyan) trên màn hình
+        // 1. View vẽ vòng tròn FOV (Nằm dưới cùng, xuyên thấu cảm ứng)
+        fovCircleView = [[FOVView alloc] initWithFrame:vc.view.bounds];
+        fovCircleView.backgroundColor = [UIColor clearColor];
+        fovCircleView.userInteractionEnabled = NO;
+        [vc.view addSubview:fovCircleView];
+        
+        // 2. Icon tròn nhỏ nổi trên màn hình
         floatingIconButton = [UIButton buttonWithType:UIButtonTypeCustom];
         floatingIconButton.frame = CGRectMake(30, 100, 50, 50);
         floatingIconButton.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.7];
         [floatingIconButton setTitle:@"DTW" forState:UIControlStateNormal];
         [floatingIconButton setTitleColor:[UIColor cyanColor] forState:UIControlStateNormal];
         floatingIconButton.titleLabel.font = [UIFont boldSystemFontOfSize:12];
-        floatingIconButton.layer.cornerRadius = 25; // Bo tròn thành hình tròn
+        floatingIconButton.layer.cornerRadius = 25;
         floatingIconButton.layer.borderWidth = 1.5;
         floatingIconButton.layer.borderColor = [UIColor cyanColor].CGColor;
         [floatingIconButton addTarget:self action:@selector(toggleMenu:) forControlEvents:UIControlEventTouchUpInside];
         
-        // Thêm cử chỉ kéo thả (Drag) cho Icon nhỏ
         UIPanGestureRecognizer *panIcon = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handleIconPan:)];
         [floatingIconButton addGestureRecognizer:panIcon];
-        
         [vc.view addSubview:floatingIconButton];
         
-        // 2. Tạo Bảng Menu Chức Năng (Mặc định ẩn, bấm icon mới hiện)
+        // 3. Bảng Menu Chức Năng
         menuContainerView = [[UIView alloc] initWithFrame:CGRectMake(90, 100, 220, 320)];
         menuContainerView.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.88];
         menuContainerView.layer.cornerRadius = 14;
         menuContainerView.layer.borderWidth = 1.2;
         menuContainerView.layer.borderColor = [UIColor cyanColor].CGColor;
-        menuContainerView.hidden = YES; // Ẩn lúc đầu
+        menuContainerView.hidden = YES;
         [vc.view addSubview:menuContainerView];
         
-        // Tiêu đề trong menu
         UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 10, 200, 25)];
         titleLabel.text = @"Dude Theft Wars Mod";
         titleLabel.textColor = [UIColor cyanColor];
@@ -88,7 +111,7 @@ static UIView *menuContainerView = nil;     // Bảng menu chính
         titleLabel.textAlignment = NSTextAlignmentCenter;
         [menuContainerView addSubview:titleLabel];
         
-        // Nút chỉnh Aim (Đầu / Thân)
+        // Nút Aim Target
         UIButton *aimBtn = [UIButton buttonWithType:UIButtonTypeSystem];
         aimBtn.frame = CGRectMake(12, 45, 196, 32);
         [aimBtn setTitle:@"Aim: Đầu (0x98)" forState:UIControlStateNormal];
@@ -145,7 +168,7 @@ static UIView *menuContainerView = nil;     // Bảng menu chính
         [slider addTarget:self action:@selector(changeFov:) forControlEvents:UIControlEventValueChanged];
         [menuContainerView addSubview:slider];
         
-        // Nút đóng menu nhanh
+        // Nút Đóng Menu
         UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
         closeBtn.frame = CGRectMake(12, 268, 196, 35);
         [closeBtn setTitle:@"Đóng Menu" forState:UIControlStateNormal];
@@ -157,20 +180,16 @@ static UIView *menuContainerView = nil;     // Bảng menu chính
     });
 }
 
-// Bấm vào icon hoặc nút đóng để bật/tắt bảng menu
 + (void)toggleMenu:(id)sender {
     isMenuShown = !isMenuShown;
     menuContainerView.hidden = !isMenuShown;
 }
 
-// Kéo thả icon tròn trên màn hình
 + (void)handleIconPan:(UIPanGestureRecognizer *)gesture {
     UIView *btn = floatingIconButton;
     CGPoint translation = [gesture translationInView:btn.superview];
     btn.center = CGPointMake(btn.center.x + translation.x, btn.center.y + translation.y);
     [gesture setTranslation:CGPointZero inView:btn.superview];
-    
-    // Dịch chuyển menu theo vị trí icon cho gọn
     menuContainerView.center = CGPointMake(btn.center.x + 120, btn.center.y);
 }
 
@@ -201,8 +220,9 @@ static UIView *menuContainerView = nil;     // Bảng menu chính
     }
 }
 
-+ (void)changeFov:(UISlider *)sender {
-    fovRadius = sender.value;
++ (void)changeFov:(UISlider *)slider {
+    fovRadius = slider.value;
+    [fovCircleView setNeedsDisplay]; // Cập nhật lại kích thước vòng tròn FOV ngay lập tức khi kéo slider
 }
 
 @end
