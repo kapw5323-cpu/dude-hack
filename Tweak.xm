@@ -2,208 +2,214 @@
 #import <CoreGraphics/CoreGraphics.h>
 #import <mach/mach.h>
 
-// --- BIẾN TRẠNG THÁI MOD MENU & TÍNH NĂNG ---
-__attribute__((unused)) static BOOL isOpen = YES;
-__attribute__((unused)) static BOOL aimEnabled = YES;
-__attribute__((unused)) static BOOL aimTargetHead = YES; // YES: Khóa đầu (0x98), NO: Khóa thân (0x90)
+// --- BIẾN TRẠNG THÁI ---
+__attribute__((unused)) static BOOL isMenuShown = NO;
+__attribute__((unused)) static BOOL aimTargetHead = YES;
 __attribute__((unused)) static BOOL espBoxEnabled = NO;
 __attribute__((unused)) static BOOL espSkeletonEnabled = NO;
 __attribute__((unused)) static BOOL espLineEnabled = NO;
-__attribute__((unused)) static float fovRadius = 100.0f; // Bán kính vòng tròn FOV
+__attribute__((unused)) static float fovRadius = 100.0f;
 
-// UI Components toàn cục
+// UI Components
 static UIWindow *modWindow = nil;
-static UIView *floatingMenu = nil;
-__attribute__((unused)) static UIView *espOverlayView = nil;
+static UIButton *floatingIconButton = nil; // Icon tròn nhỏ bên ngoài
+static UIView *menuContainerView = nil;     // Bảng menu chính
 
-// --- HÀM AN TOÀN ĐỌC/GHI BỘ NHỚ (CHỐNG VĂNG GAME) ---
-__attribute__((unused)) static BOOL safe_vm_read(mach_vm_address_t address, void *buffer, mach_msg_type_number_t size) {
-    if (address == 0 || buffer == NULL) return NO;
-    vm_size_t outSize = 0;
-    kern_return_t kr = vm_read_overwrite(mach_task_self(), address, size, (mach_vm_address_t)buffer, &outSize);
-    return (kr == KERN_SUCCESS && outSize == size);
-}
-
-__attribute__((unused)) static BOOL safe_vm_write(mach_vm_address_t address, void *data, mach_msg_type_number_t size) {
-    if (address == 0 || data == NULL) return NO;
-    mach_port_t self_task = mach_task_self();
-    kern_return_t kr = vm_protect(self_task, address, size, FALSE, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
-    if (kr != KERN_SUCCESS) return NO;
-    kr = vm_write(self_task, address, (vm_offset_t)data, size);
-    return (kr == KERN_SUCCESS);
-}
-
-// --- GIAO DIỆN MOD MENU NỔI ---
-@interface ModMenuController : NSObject
-+ (void)setupMenu;
+// --- LỚP CHẶN CHẠM THÔNG MINH (CHỐNG LIỆT CẢM ỨNG GAME) ---
+@interface PassthroughView : UIView
 @end
 
-@implementation ModMenuController
+@implementation PassthroughView
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    UIView *hitView = [super hitTest:point withEvent:event];
+    // Nếu chạm vào vùng trống ngoài menu/icon thì cho xuyên thấu xuống game
+    if (hitView == self) {
+        return nil;
+    }
+    return hitView;
+}
+@end
 
-+ (void)setupMenu {
+// --- GIAO DIỆN MOD MENU ICON NHỎ ---
+@interface ModMenuManager : NSObject
++ (void)setupOverlay;
+@end
+
+@implementation ModMenuManager
+
++ (void)setupOverlay {
     if (modWindow) return;
     
     dispatch_async(dispatch_get_main_queue(), ^{
+        // Tạo UIWindow với mức level vừa đủ đè game nhưng không nuốt vĩnh viễn sự kiện cảm ứng thô
         modWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-        modWindow.windowLevel = UIWindowLevelAlert + 100; // Luôn hiện đè lên trên game
+        modWindow.windowLevel = UIWindowLevelStatusBar + 1;
         modWindow.backgroundColor = [UIColor clearColor];
         modWindow.hidden = NO;
         
+        // Dùng PassthroughView làm root view để cho phép chạm xuyên qua vùng trống
         UIViewController *vc = [[UIViewController alloc] init];
+        vc.view = [[PassthroughView alloc] initWithFrame:[UIScreen mainScreen].bounds];
+        vc.view.backgroundColor = [UIColor clearColor];
         modWindow.rootViewController = vc;
         
-        // View vẽ đồ họa ESP
-        espOverlayView = [[UIView alloc] initWithFrame:vc.view.bounds];
-        espOverlayView.backgroundColor = [UIColor clearColor];
-        espOverlayView.userInteractionEnabled = NO;
-        [vc.view addSubview:espOverlayView];
+        // 1. Tạo Icon nổi nhỏ gọn (Hình tròn, màu cyan) trên màn hình
+        floatingIconButton = [UIButton buttonWithType:UIButtonTypeCustom];
+        floatingIconButton.frame = CGRectMake(30, 100, 50, 50);
+        floatingIconButton.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.7];
+        [floatingIconButton setTitle:@"DTW" forState:UIControlStateNormal];
+        [floatingIconButton setTitleColor:[UIColor cyanColor] forState:UIControlStateNormal];
+        floatingIconButton.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+        floatingIconButton.layer.cornerRadius = 25; // Bo tròn thành hình tròn
+        floatingIconButton.layer.borderWidth = 1.5;
+        floatingIconButton.layer.borderColor = [UIColor cyanColor].CGColor;
+        [floatingIconButton addTarget:self action:@selector(toggleMenu:) forControlEvents:UIControlEventTouchUpInside];
         
-        // Khung Menu Nổi (Kéo thả được)
-        floatingMenu = [[UIView alloc] initWithFrame:CGRectMake(40, 60, 240, 360)];
-        floatingMenu.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.85];
-        floatingMenu.layer.cornerRadius = 14;
-        floatingMenu.layer.borderWidth = 1.5;
-        floatingMenu.layer.borderColor = [UIColor cyanColor].CGColor;
-        [vc.view addSubview:floatingMenu];
+        // Thêm cử chỉ kéo thả (Drag) cho Icon nhỏ
+        UIPanGestureRecognizer *panIcon = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handleIconPan:)];
+        [floatingIconButton addGestureRecognizer:panIcon];
         
-        // Tiêu đề Menu
-        UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 10, 220, 30)];
+        [vc.view addSubview:floatingIconButton];
+        
+        // 2. Tạo Bảng Menu Chức Năng (Mặc định ẩn, bấm icon mới hiện)
+        menuContainerView = [[UIView alloc] initWithFrame:CGRectMake(90, 100, 220, 320)];
+        menuContainerView.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.88];
+        menuContainerView.layer.cornerRadius = 14;
+        menuContainerView.layer.borderWidth = 1.2;
+        menuContainerView.layer.borderColor = [UIColor cyanColor].CGColor;
+        menuContainerView.hidden = YES; // Ẩn lúc đầu
+        [vc.view addSubview:menuContainerView];
+        
+        // Tiêu đề trong menu
+        UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 10, 200, 25)];
         titleLabel.text = @"Dude Theft Wars Mod";
         titleLabel.textColor = [UIColor cyanColor];
-        titleLabel.font = [UIFont boldSystemFontOfSize:15];
+        titleLabel.font = [UIFont boldSystemFontOfSize:13];
         titleLabel.textAlignment = NSTextAlignmentCenter;
-        [floatingMenu addSubview:titleLabel];
+        [menuContainerView addSubview:titleLabel];
         
-        // Nút Aim Target (Đầu 0x98 / Thân 0x90)
+        // Nút chỉnh Aim (Đầu / Thân)
         UIButton *aimBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        aimBtn.frame = CGRectMake(15, 50, 210, 35);
-        [aimBtn setTitle:@"Aim Target: Đầu (0x98)" forState:UIControlStateNormal];
+        aimBtn.frame = CGRectMake(12, 45, 196, 32);
+        [aimBtn setTitle:@"Aim: Đầu (0x98)" forState:UIControlStateNormal];
         [aimBtn setTitleColor:[UIColor greenColor] forState:UIControlStateNormal];
         aimBtn.backgroundColor = [[UIColor darkGrayColor] colorWithAlphaComponent:0.5];
         aimBtn.layer.cornerRadius = 6;
-        [aimBtn addTarget:self action:@selector(toggleAimTarget:) forControlEvents:UIControlEventTouchUpInside];
-        [floatingMenu addSubview:aimBtn];
+        [aimBtn addTarget:self action:@selector(clickAimTarget:) forControlEvents:UIControlEventTouchUpInside];
+        [menuContainerView addSubview:aimBtn];
         
         // Nút ESP Box
         UIButton *boxBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        boxBtn.frame = CGRectMake(15, 95, 210, 35);
+        boxBtn.frame = CGRectMake(12, 85, 196, 32);
         [boxBtn setTitle:@"ESP Box: Tắt" forState:UIControlStateNormal];
         [boxBtn setTitleColor:[UIColor redColor] forState:UIControlStateNormal];
         boxBtn.backgroundColor = [[UIColor darkGrayColor] colorWithAlphaComponent:0.5];
         boxBtn.layer.cornerRadius = 6;
-        boxBtn.tag = 201;
-        [boxBtn addTarget:self action:@selector(toggleFeature:) forControlEvents:UIControlEventTouchUpInside];
-        [floatingMenu addSubview:boxBtn];
+        boxBtn.tag = 301;
+        [boxBtn addTarget:self action:@selector(clickFeature:) forControlEvents:UIControlEventTouchUpInside];
+        [menuContainerView addSubview:boxBtn];
         
         // Nút ESP Skeleton
         UIButton *skelBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        skelBtn.frame = CGRectMake(15, 140, 210, 35);
+        skelBtn.frame = CGRectMake(12, 125, 196, 32);
         [skelBtn setTitle:@"ESP Skeleton: Tắt" forState:UIControlStateNormal];
         [skelBtn setTitleColor:[UIColor redColor] forState:UIControlStateNormal];
         skelBtn.backgroundColor = [[UIColor darkGrayColor] colorWithAlphaComponent:0.5];
         skelBtn.layer.cornerRadius = 6;
-        skelBtn.tag = 202;
-        [skelBtn addTarget:self action:@selector(toggleFeature:) forControlEvents:UIControlEventTouchUpInside];
-        [floatingMenu addSubview:skelBtn];
+        skelBtn.tag = 302;
+        [skelBtn addTarget:self action:@selector(clickFeature:) forControlEvents:UIControlEventTouchUpInside];
+        [menuContainerView addSubview:skelBtn];
         
         // Nút ESP Line
         UIButton *lineBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        lineBtn.frame = CGRectMake(15, 185, 210, 35);
+        lineBtn.frame = CGRectMake(12, 165, 196, 32);
         [lineBtn setTitle:@"ESP Line: Tắt" forState:UIControlStateNormal];
         [lineBtn setTitleColor:[UIColor redColor] forState:UIControlStateNormal];
         lineBtn.backgroundColor = [[UIColor darkGrayColor] colorWithAlphaComponent:0.5];
         lineBtn.layer.cornerRadius = 6;
-        lineBtn.tag = 203;
-        [lineBtn addTarget:self action:@selector(toggleFeature:) forControlEvents:UIControlEventTouchUpInside];
-        [floatingMenu addSubview:lineBtn];
+        lineBtn.tag = 303;
+        [lineBtn addTarget:self action:@selector(clickFeature:) forControlEvents:UIControlEventTouchUpInside];
+        [menuContainerView addSubview:lineBtn];
         
-        // Nhãn FOV Slider
-        UILabel *fovLabel = [[UILabel alloc] initWithFrame:CGRectMake(15, 230, 210, 20)];
-        fovLabel.text = @"FOV Radius:";
-        fovLabel.textColor = [UIColor whiteColor];
-        fovLabel.font = [UIFont systemFontOfSize:12];
-        [floatingMenu addSubview:fovLabel];
+        // Slider FOV
+        UILabel *fovLbl = [[UILabel alloc] initWithFrame:CGRectMake(12, 205, 196, 20)];
+        fovLbl.text = @"FOV Radius:";
+        fovLbl.textColor = [UIColor whiteColor];
+        fovLbl.font = [UIFont systemFontOfSize:11];
+        [menuContainerView addSubview:fovLbl];
         
-        // Thanh trượt FOV
-        UISlider *fovSlider = [[UISlider alloc] initWithFrame:CGRectMake(15, 255, 210, 30)];
-        fovSlider.minimumValue = 50.0f;
-        fovSlider.maximumValue = 300.0f;
-        fovSlider.value = fovRadius;
-        [fovSlider addTarget:self action:@selector(sliderChanged:) forControlEvents:UIControlEventValueChanged];
-        [floatingMenu addSubview:fovSlider];
+        UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(12, 225, 196, 30)];
+        slider.minimumValue = 50.0f;
+        slider.maximumValue = 300.0f;
+        slider.value = fovRadius;
+        [slider addTarget:self action:@selector(changeFov:) forControlEvents:UIControlEventValueChanged];
+        [menuContainerView addSubview:slider];
         
-        // Nút Ẩn / Hiện Menu
-        UIButton *hideBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        hideBtn.frame = CGRectMake(15, 305, 210, 35);
-        [hideBtn setTitle:@"Ẩn Menu" forState:UIControlStateNormal];
-        [hideBtn setTitleColor:[UIColor yellowColor] forState:UIControlStateNormal];
-        hideBtn.backgroundColor = [[UIColor darkGrayColor] colorWithAlphaComponent:0.5];
-        hideBtn.layer.cornerRadius = 6;
-        [hideBtn addTarget:self action:@selector(toggleMenuVisibility:) forControlEvents:UIControlEventTouchUpInside];
-        [floatingMenu addSubview:hideBtn];
-        
-        // Cử chỉ kéo thả Menu
-        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
-        [floatingMenu addGestureRecognizer:pan];
+        // Nút đóng menu nhanh
+        UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+        closeBtn.frame = CGRectMake(12, 268, 196, 35);
+        [closeBtn setTitle:@"Đóng Menu" forState:UIControlStateNormal];
+        [closeBtn setTitleColor:[UIColor yellowColor] forState:UIControlStateNormal];
+        closeBtn.backgroundColor = [[UIColor darkGrayColor] colorWithAlphaComponent:0.6];
+        closeBtn.layer.cornerRadius = 6;
+        [closeBtn addTarget:self action:@selector(toggleMenu:) forControlEvents:UIControlEventTouchUpInside];
+        [menuContainerView addSubview:closeBtn];
     });
 }
 
-+ (void)toggleAimTarget:(UIButton *)sender {
+// Bấm vào icon hoặc nút đóng để bật/tắt bảng menu
++ (void)toggleMenu:(id)sender {
+    isMenuShown = !isMenuShown;
+    menuContainerView.hidden = !isMenuShown;
+}
+
+// Kéo thả icon tròn trên màn hình
++ (void)handleIconPan:(UIPanGestureRecognizer *)gesture {
+    UIView *btn = floatingIconButton;
+    CGPoint translation = [gesture translationInView:btn.superview];
+    btn.center = CGPointMake(btn.center.x + translation.x, btn.center.y + translation.y);
+    [gesture setTranslation:CGPointZero inView:btn.superview];
+    
+    // Dịch chuyển menu theo vị trí icon cho gọn
+    menuContainerView.center = CGPointMake(btn.center.x + 120, btn.center.y);
+}
+
++ (void)clickAimTarget:(UIButton *)sender {
     aimTargetHead = !aimTargetHead;
     if (aimTargetHead) {
-        [sender setTitle:@"Aim Target: Đầu (0x98)" forState:UIControlStateNormal];
+        [sender setTitle:@"Aim: Đầu (0x98)" forState:UIControlStateNormal];
         [sender setTitleColor:[UIColor greenColor] forState:UIControlStateNormal];
     } else {
-        [sender setTitle:@"Aim Target: Thân (0x90)" forState:UIControlStateNormal];
+        [sender setTitle:@"Aim: Thân (0x90)" forState:UIControlStateNormal];
         [sender setTitleColor:[UIColor greenColor] forState:UIControlStateNormal];
     }
 }
 
-+ (void)toggleFeature:(UIButton *)sender {
-    if (sender.tag == 201) {
++ (void)clickFeature:(UIButton *)sender {
+    if (sender.tag == 301) {
         espBoxEnabled = !espBoxEnabled;
         [sender setTitle:espBoxEnabled ? @"ESP Box: Bật" : @"ESP Box: Tắt" forState:UIControlStateNormal];
         [sender setTitleColor:espBoxEnabled ? [UIColor greenColor] : [UIColor redColor] forState:UIControlStateNormal];
-    } else if (sender.tag == 202) {
+    } else if (sender.tag == 302) {
         espSkeletonEnabled = !espSkeletonEnabled;
         [sender setTitle:espSkeletonEnabled ? @"ESP Skeleton: Bật" : @"ESP Skeleton: Tắt" forState:UIControlStateNormal];
         [sender setTitleColor:espSkeletonEnabled ? [UIColor greenColor] : [UIColor redColor] forState:UIControlStateNormal];
-    } else if (sender.tag == 203) {
+    } else if (sender.tag == 303) {
         espLineEnabled = !espLineEnabled;
         [sender setTitle:espLineEnabled ? @"ESP Line: Bật" : @"ESP Line: Tắt" forState:UIControlStateNormal];
         [sender setTitleColor:espLineEnabled ? [UIColor greenColor] : [UIColor redColor] forState:UIControlStateNormal];
     }
 }
 
-+ (void)sliderChanged:(UISlider *)sender {
++ (void)changeFov:(UISlider *)sender {
     fovRadius = sender.value;
-}
-
-+ (void)toggleMenuVisibility:(UIButton *)sender {
-    isOpen = !isOpen;
-    for (UIView *subview in floatingMenu.subviews) {
-        if (subview != sender) {
-            subview.hidden = !isOpen;
-        }
-    }
-    CGRect frame = floatingMenu.frame;
-    frame.size.height = isOpen ? 360 : 50;
-    floatingMenu.frame = frame;
-    [sender setTitle:isOpen ? @"Ẩn Menu" : @"Hiện Menu" forState:UIControlStateNormal];
-}
-
-+ (void)handlePan:(UIPanGestureRecognizer *)gesture {
-    UIView *piece = floatingMenu;
-    CGPoint translation = [gesture translationInView:piece.superview];
-    piece.center = CGPointMake(piece.center.x + translation.x, piece.center.y + translation.y);
-    [gesture setTranslation:CGPointZero inView:piece.superview];
 }
 
 @end
 
-// --- KÍCH HOẠT MENU KHI GAME CHẠY ---
+// Kích hoạt khi game load
 %ctor {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        [ModMenuController setupMenu];
+        [ModMenuManager setupOverlay];
     });
 }
