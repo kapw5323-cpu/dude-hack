@@ -1,12 +1,12 @@
-ARCHS = arm64 arm64e
-TARGET = iphone:clang:latest:14.0
+TARGET = iphone:clang:latest:15.0
+ARCHS = arm64
 
 include $(THEOS)/makefiles/common.mk
 
-TWEAK_NAME = DudeHack
+TWEAK_NAME = DudeTheftWarsMod
 
-DudeHack_FILES = Tweak.xm
-DudeHack_FRAMEWORKS = Foundation UIKit QuartzCore
-DudeHack_CFLAGS = -fobjc-arc -Wno-error=deprecated-declarations
+DudeTheftWarsMod_FILES = Tweak.xm
+DudeTheftWarsMod_FRAMEWORKS = UIKit Foundation CoreGraphics QuartzCore
+DudeTheftWarsMod_CFLAGS = -fobjc-arc -Wno-error -Wno-unused-variable -Wno-unused-function
 
 include $(THEOS_MAKE_PATH)/tweak.mk
