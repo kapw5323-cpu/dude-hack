@@ -5,6 +5,9 @@
 #include <dlfcn.h>
 #include <string.h>
 
+// --- ĐỊNH NGHĨA CẤU TRÚC TỌA ĐỘ (Đã thêm vào đây) ---
+struct Vector3 { float x, y, z; };
+
 // --- CÁC HÀM IL2CPP CẦN THIẾT ---
 void* (*il2cpp_domain_get)();
 void** (*il2cpp_domain_get_assemblies)(void*, size_t*);
@@ -65,7 +68,7 @@ void ReadMemoryTask() {
         if (!safe_read(arrayPtr + 0x20 + (i * 8), trans) || !trans) continue;
         
         // Đọc vị trí X, Y, Z (0x38)
-        struct { float x, y, z; } pos = {0, 0, 0};
+        Vector3 pos = {0, 0, 0};
         if (!safe_read(trans + 0x38, pos)) continue;
         
         // Bỏ qua tọa độ rác
