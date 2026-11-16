@@ -9,10 +9,10 @@
 #include <vector>
 #include <os/lock.h>
 
-// ================= CẤU HÌNH =================
+// ================= CẤU HÌNH OFFSET (ĐÃ THÊM CAMERA_TRANS) =================
 #define OFF_PLAYER_AVATAR  0x40
 #define OFF_OTHERPLAYERS   0x70
-#define OFF_AVATAR_TRANS   0x90
+#define OFF_CAMERA_TRANS   0x20  // <--- Đã thêm dòng này
 #define OFF_YAW            0x68
 #define OFF_PITCH          0x64
 #define OFF_POSITION       0x38
@@ -38,13 +38,13 @@ void* (*il2cpp_class_get_methods)(void*, void**);
 const char* (*il2cpp_method_get_name)(void*);
 void* (*il2cpp_method_get_pointer)(void*);
 
-// Chú ý: WorldToScreenPoint trả về struct qua con trỏ (Vector3* ret)
+// Hàm game (Đã fix chuẩn chữ ký trả về struct qua con trỏ)
 void (*WorldToScreenPoint)(void* cam, Vector3 pos, Vector3* ret) = NULL;
 void* (*get_mainCamera)() = NULL;
 
 uint64_t MPGameManager_Instance = 0;
 
-// Hàm đọc/ghi an toàn (Bọc thép chống crash)
+// Hàm đọc/ghi an toàn
 template <typename T> bool safe_read(uint64_t addr, T& out) {
     if (!addr) return false;
     vm_size_t size = 0;
@@ -55,7 +55,7 @@ template <typename T> bool safe_write(uint64_t addr, const T& in) {
     return vm_write(mach_task_self(), addr, (vm_address_t)&in, sizeof(T)) == KERN_SUCCESS;
 }
 
-// ================= GIAO DIỆN =================
+// ================= GIAO DIỆN VẼ =================
 @interface ESPOverlay : UIView
 @end
 @implementation ESPOverlay
@@ -63,6 +63,7 @@ template <typename T> bool safe_write(uint64_t addr, const T& in) {
     CGContextRef ctx = UIGraphicsGetCurrentContext();
     CGContextClearRect(ctx, self.bounds);
     
+    // Vẽ vòng tròn FOV
     CGContextSetStrokeColorWithColor(ctx, [UIColor redColor].CGColor);
     CGContextSetLineWidth(ctx, 1.0);
     CGContextStrokeEllipseInRect(ctx, CGRectMake(self.bounds.size.width/2 - fovRadius, self.bounds.size.height/2 - fovRadius, fovRadius*2, fovRadius*2));
@@ -94,18 +95,18 @@ template <typename T> bool safe_write(uint64_t addr, const T& in) {
 @end
 ESPOverlay *espView = nil;
 
-// ================= LOGIC CỐT LÕI =================
+// ================= HOOK LOGIC =================
 typedef void (*CameraUpdate_t)(void* self);
 CameraUpdate_t orig_CameraUpdate = NULL;
 
 void hook_CameraUpdate(void* self) {
     orig_CameraUpdate(self);
     
-    // Nếu chưa tìm thấy MPGameManager thì bỏ qua (tránh crash)
     if (MPGameManager_Instance == 0) return;
 
     Vector3 camPos = {0,0,0};
     uint64_t camTrans = 0;
+    // Lấy vị trí Camera hiện tại
     if (safe_read((uint64_t)self + OFF_CAMERA_TRANS, camTrans) && camTrans) {
         safe_read(camTrans + OFF_POSITION, camPos);
     }
@@ -129,7 +130,7 @@ void hook_CameraUpdate(void* self) {
                 if (safe_read(arrayPtr + 0x20 + (i * 8), trans) && trans) {
                     Vector3 pos = {0,0,0};
                     if (safe_read(trans + OFF_POSITION, pos)) {
-                        // Tọa độ đầu để vẽ Box
+                        // Tọa độ đầu
                         Vector3 headPos = { pos.x, pos.y + 1.5f, pos.z }; 
                         
                         os_unfair_lock_lock(&lock);
@@ -149,7 +150,6 @@ void hook_CameraUpdate(void* self) {
                             safe_read((uint64_t)self + OFF_YAW, curYaw);
                             safe_read((uint64_t)self + OFF_PITCH, curPitch);
                             
-                            // Tính góc lệch ngắn nhất (tránh xoay 360 độ)
                             float yawDiff = targetYaw - curYaw;
                             while (yawDiff > 180) yawDiff -= 360;
                             while (yawDiff < -180) yawDiff += 360;
@@ -198,22 +198,26 @@ void hook_CameraUpdate(void* self) {
     });
 }
 
-// ================= HOOK LẤY INSTANCE =================
+// Hook MPGameManager.Update để lấy Instance
 typedef void (*MPGameManager_Update_t)(void* self);
 MPGameManager_Update_t orig_MPGameManager_Update = NULL;
 void hook_MPGameManager_Update(void* self) {
     orig_MPGameManager_Update(self);
-    MPGameManager_Instance = (uint64_t)self; // Lấy instance liên tục, đảm bảo an toàn
+    MPGameManager_Instance = (uint64_t)self;
 }
 
-// ================= KHỞI TẠO =================
 __attribute__((constructor))
 static void init() {
     dispatch_async(dispatch_get_main_queue(), ^{
         espView = [[ESPOverlay alloc] initWithFrame:[UIScreen mainScreen].bounds];
         espView.backgroundColor = [UIColor clearColor];
         espView.userInteractionEnabled = NO;
-        [[UIApplication sharedApplication].keyWindow addSubview:espView];
+        
+        // SỬA CẢNH BÁO KEYWINDOW: Dùng windows.firstObject thay vì keyWindow
+        UIWindow *mainWindow = [UIApplication sharedApplication].windows.firstObject;
+        if (mainWindow) {
+            [mainWindow addSubview:espView];
+        }
     });
     
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
